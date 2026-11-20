@@ -1,0 +1,18 @@
+{
+  "files.watcherExclude": {
+    "**/build/**": true,
+    "**/install/**": true,
+    "**/log/**": true,
+    "**/gazebo_models/**": true,
+    "**/images/**": true,
+    "**/coqui_captures/**": true
+  },
+  "search.exclude": {
+    "**/build/**": true,
+    "**/install/**": true,
+    "**/log/**": true,
+    "**/gazebo_models/**": true,
+    "**/images/**": true,
+    "**/coqui_captures/**": true
+  }
+}
