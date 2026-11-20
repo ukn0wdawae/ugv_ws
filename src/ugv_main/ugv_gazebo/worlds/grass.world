@@ -53,10 +53,34 @@
             </plane>
           </geometry>
           <surface>
-            <friction>
+            <contact>
               <ode>
-                <mu>1.0</mu>
-                <mu2>1.0</mu2>
+                <kp>300000.0</kp>
+                <kd>60.0</kd>
+                <min_depth>0.001</min_depth>
+                <max_vel>0.1</max_vel>
+              </ode>
+            </contact>
+            <bounce>
+              <restitution_coefficient>0.0</restitution_coefficient>
+              <threshold>1e+06</threshold>
+            </bounce>
+            <friction>
+              <torsional>
+                <coefficient>0.22</coefficient>
+                <use_patch_radius>1</use_patch_radius>
+                <patch_radius>0.014</patch_radius>
+                <surface_radius>0.040</surface_radius>
+                <ode>
+                  <slip>0.0</slip>
+                </ode>
+              </torsional>
+              <ode>
+                <mu>0.80</mu>
+                <mu2>0.80</mu2>
+                <fdir1>0 0 0</fdir1>
+                <slip1>0.0</slip1>
+                <slip2>0.0</slip2>
               </ode>
             </friction>
           </surface>

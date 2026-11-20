@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ugv_audio</name>
+  <version>0.1.0</version>
+  <description>5-Channel 3D Microphone Array Simulation, GCC-PHAT Direction of Arrival (DOA), and Multi-Position Acoustic Triangulation for Coqui Frog Localization on ugv_pro_audio.</description>
+  <maintainer email="ugv@waveshare.com">ugv</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2_ros</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

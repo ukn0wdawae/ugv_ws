@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>UGV system architecture</title>
+<style>
+  @page { size: 7in 9.15in; margin: 0.12in; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #fff;
+    color: #111;
+    font: 8.4pt Helvetica, Arial, sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    width: 6.76in;
+    margin: 0 auto;
+  }
+  .layer {
+    border: 0.7pt solid #666;
+    border-radius: 4px;
+    padding: 5px 6px 6px;
+    margin: 0 0 7px;
+  }
+  .layer h2 {
+    margin: 0 0 4px;
+    font-size: 8pt;
+    font-weight: 600;
+    color: #333;
+    letter-spacing: 0.01em;
+  }
+  .row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+  .row > * { flex: 1; min-width: 0; }
+  .box {
+    border: 0.7pt solid #333;
+    border-radius: 3px;
+    background: #fff;
+    padding: 4px 5px;
+  }
+  .box .name { font-weight: 600; display: block; margin-bottom: 1px; }
+  .box .meta { color: #222; line-height: 1.25; }
+  .op  { background: #f4f4f4; }
+  .mi  { background: #e8eef6; }
+  .na  { background: #e6f0e8; }
+  .sl  { background: #efe6f4; }
+  .tf  { background: #f6efe0; }
+  .gz  { background: #ececec; }
+  .hw  { background: #ececec; }
+  .flow {
+    text-align: center;
+    font-size: 7.5pt;
+    color: #333;
+    margin: -3px 0 5px;
+    line-height: 1.2;
+  }
+  .navgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 6px;
+  }
+  .plat {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="layer op">
+  <h2>Operator</h2>
+  <div class="row">
+    <div class="box"><span class="name">RViz / rtabmap_viz</span><span class="meta">/map &nbsp; /tf &nbsp; costmaps</span></div>
+    <div class="box"><span class="name">keyboard_ctrl / joy_ctrl / web</span><span class="meta">publishes /cmd_vel</span></div>
+    <div class="box"><span class="name">behavior_ctrl</span><span class="meta">/odom /robot_pose → /goal_pose</span></div>
+  </div>
+</div>
+<div class="flow">↑ views &nbsp;&nbsp; ↓ /goal_pose</div>
+
+<div class="layer mi">
+  <h2>Mission — run exactly one</h2>
+  <div class="row">
+    <div class="box">
+      <span class="name">explore_lite</span>
+      <span class="meta">sub /map, /map_updates<br/>pub explore/frontiers &nbsp; sub explore/resume<br/>action navigate_to_pose</span>
+    </div>
+    <div class="box">
+      <span class="name">visual_coverage</span>
+      <span class="meta">sub /map, /map_updates<br/>pub coverage_markers<br/>actions /navigate_to_pose and /spin</span>
+    </div>
+  </div>
+</div>
+<div class="flow">↓ NavigateToPose &nbsp; (coverage also /spin)</div>
+
+<div class="layer na">
+  <h2>Nav2 &nbsp; navigation_launch.py + slam_nav.yaml &nbsp; · &nbsp; no map_server / AMCL</h2>
+  <div class="navgrid">
+    <div class="box"><span class="name">bt_navigator</span><span class="meta">/navigate_to_pose<br/>/navigate_through_poses</span></div>
+    <div class="box"><span class="name">planner_server</span><span class="meta">NavfnPlanner<br/>global_frame: map</span></div>
+    <div class="box"><span class="name">controller_server</span><span class="meta">DWB + RotationShim<br/>or TEB (rtabmap_teb.yaml)</span></div>
+    <div class="box"><span class="name">behavior_server</span><span class="meta">/spin /backup /wait<br/>/drive_on_heading</span></div>
+    <div class="box"><span class="name">velocity_smoother</span><span class="meta">/cmd_vel_nav → /cmd_vel</span></div>
+    <div class="box"><span class="name">global_costmap</span><span class="meta">static ← /map<br/>obstacle ← /scan</span></div>
+    <div class="box"><span class="name">local_costmap</span><span class="meta">odom frame, 5×5 m<br/>obstacle ← /scan</span></div>
+    <div class="box"><span class="name">lifecycle_manager</span><span class="meta">activates Nav2 servers</span></div>
+  </div>
+</div>
+<div class="flow">↑ /map &nbsp; /scan &nbsp; /odom &nbsp;&nbsp; ↓ /cmd_vel</div>
+
+<div class="layer sl">
+  <h2>RTAB-Map SLAM &nbsp; rtabmap_rgbd.launch.py + rtabmap_slam.yaml</h2>
+  <div class="navgrid" style="grid-template-columns: 1.1fr 1.4fr 1fr 1fr 1.1fr;">
+    <div class="box"><span class="name">rgbd_sync</span><span class="meta">approx_sync 0.05 s<br/>rgb + depth + info</span></div>
+    <div class="box"><span class="name">rtabmap</span><span class="meta">ICP lidar neighbor links<br/>strict visual loops<br/>5 cm grid from lidar</span></div>
+    <div class="box"><span class="name">/map</span><span class="meta">OccupancyGrid<br/>TRANSIENT_LOCAL</span></div>
+    <div class="box"><span class="name">rtabmap.db</span><span class="meta">~/.ros/<br/>−d on SLAM start</span></div>
+    <div class="box"><span class="name">TF map → odom</span><span class="meta">robot_pose_publisher<br/>/robot_pose</span></div>
+  </div>
+</div>
+<div class="flow">↑ /scan &nbsp; rgb/depth &nbsp; /odom &nbsp; (/imu if force_3dof:=false)</div>
+
+<div class="layer tf">
+  <h2>TF tree</h2>
+  <div class="box">
+    <span class="meta">map → odom → base_footprint → base_link → base_lidar_link / base_imu_link / 3d_camera_link / gimbal</span>
+  </div>
+</div>
+
+<div class="layer" style="background:#f3f3f3; margin-bottom:0;">
+  <h2>Platform — pick one</h2>
+  <div class="plat">
+    <div class="box gz">
+      <span class="name">Gazebo Classic 11</span>
+      <span class="meta">bringup.launch.py &nbsp; ugv_world.world<br/>UGV_MODEL = rover / beast / rasp_rover</span>
+      <div class="inner">
+        <div class="box"><span class="name">gzserver</span><span class="meta">/clock</span></div>
+        <div class="box"><span class="name">ray lidar</span><span class="meta">/scan &nbsp; 10 Hz</span></div>
+        <div class="box"><span class="name">depth camera</span><span class="meta">/camera/image_raw<br/>/camera/depth/image_raw<br/>/camera/camera_info</span></div>
+        <div class="box"><span class="name">IMU</span><span class="meta">/imu</span></div>
+        <div class="box"><span class="name">diff_drive</span><span class="meta">/cmd_vel &nbsp; /odom<br/>TF odom→base_footprint</span></div>
+        <div class="box"><span class="name">pt_camera</span><span class="meta">off &nbsp; not used by SLAM</span></div>
+      </div>
+    </div>
+    <div class="box hw">
+      <span class="name">Real UGV &nbsp; UART 115200</span>
+      <span class="meta">/dev/ttyAMA0 (Pi) or /dev/ttyTHS1 (Jetson)</span>
+      <div class="inner">
+        <div class="box"><span class="name">ugv_bringup</span><span class="meta">/imu/data_raw<br/>/odom/odom_raw /voltage</span></div>
+        <div class="box"><span class="name">ugv_driver</span><span class="meta">sub /cmd_vel T=13<br/>gimbal / LED</span></div>
+        <div class="box"><span class="name">ldlidar</span><span class="meta">LD06 / LD19 / STL27L<br/>/scan</span></div>
+        <div class="box"><span class="name">OAK-D Lite</span><span class="meta">oak/rgb/*<br/>oak/stereo/image_raw</span></div>
+        <div class="box"><span class="name">base_node</span><span class="meta">→ /odom<br/>optional EKF</span></div>
+        <div class="box"><span class="name">chassis MCU</span><span class="meta">JSON serial</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

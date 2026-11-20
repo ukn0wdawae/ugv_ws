@@ -10,6 +10,10 @@ install(DIRECTORY launch meshes urdf rviz
     DESTINATION share/${PROJECT_NAME}
 )
 
+install(FILES model.config
+    DESTINATION share/${PROJECT_NAME}
+)
+
 ament_export_dependencies(ament_cmake)
 ament_export_dependencies(ament_cmake_python)
 ament_export_dependencies(rosidl_default_generators)

@@ -1,0 +1,201 @@
+# Coqui Frog Acoustic Environments Configuration (Multi-Frog Map Layout — No Scenario Tag)
+# In each compact environment (park, lake, hill, forest), 5 Coqui frogs are placed
+# simultaneously across the map in realistic habitats:
+#   1. frog_open:          In an open clearing (small ~4.8cm frog on a mossy stone perch with obstacle collision)
+#   2. frog_behind_tree:   Behind a solid tree trunk (robot must plan around the tree via Nav2 to get a clear view)
+#   3. frog_inside_bush:   Inside a dense untraversable bush thicket (robot stops at bush boundary & aims camera)
+#   4. frog_behind_object: Behind a solid object (bench, boulder, rock outcrop, or fallen log)
+#   5. frog_on_tree:       Perched ~1.55m high on a tree branch (robot stands back & tilts PTZ camera upward)
+
+environments:
+  park:
+    spawn: [47.0, 1.0, 3.03, 3.05]
+    frogs:
+      - id: "frog_open"
+        name: "coqui_frog_open"
+        pos: [43.2, 3.0, 2.99]
+        placement: "open"
+        foliage_attenuation: 1.0
+        vantage_hint_angle: -1.10
+        standoff_m: 1.45
+        description: "Small Coqui frog in open grassy clearing off the main park path"
+      - id: "frog_behind_tree"
+        name: "coqui_frog_behind_tree"
+        pos: [41.1, -1.9, 2.99]
+        obstacle_pos: [41.8, -1.6, 2.99]
+        placement: "behind_tree"
+        foliage_attenuation: 0.90
+        vantage_hint_angle: -2.45
+        standoff_m: 1.55
+        description: "Coqui frog hidden behind a park tree trunk (requires navigating around tree)"
+      - id: "frog_inside_bush"
+        name: "coqui_frog_inside_bush"
+        pos: [43.5, -3.6, 2.99]
+        obstacle_pos: [43.5, -3.6, 2.99]
+        placement: "inside_bush"
+        foliage_attenuation: 0.78
+        vantage_hint_angle: 1.40
+        standoff_m: 1.85
+        description: "Coqui frog inside dense untraversable bush thicket (foliage occlusion)"
+      - id: "frog_behind_object"
+        name: "coqui_frog_behind_object"
+        pos: [38.4, 2.5, 2.99]
+        obstacle_pos: [39.2, 2.2, 2.99]
+        placement: "behind_object"
+        foliage_attenuation: 0.92
+        vantage_hint_angle: 2.35
+        standoff_m: 1.55
+        description: "Coqui frog behind a wooden park bench/planter obstacle"
+      - id: "frog_on_tree"
+        name: "coqui_frog_on_tree"
+        pos: [45.2, 4.6, 4.54]
+        obstacle_pos: [45.2, 4.6, 2.99]
+        placement: "on_tree"
+        foliage_attenuation: 0.94
+        vantage_hint_angle: -1.35
+        standoff_m: 2.15
+        description: "Coqui frog perched 1.55m high on a park tree branch (requires upward PTZ tilt)"
+
+  lake:
+    spawn: [-47.0, -15.0, 3.85, 0.0]
+    frogs:
+      - id: "frog_open"
+        name: "coqui_frog_open"
+        pos: [-43.2, -12.8, 3.76]
+        placement: "open"
+        foliage_attenuation: 1.0
+        vantage_hint_angle: -2.10
+        standoff_m: 1.45
+        description: "Small Coqui frog in open lakeshore clearing"
+      - id: "frog_behind_tree"
+        name: "coqui_frog_behind_tree"
+        pos: [-41.3, -17.1, 4.11]
+        obstacle_pos: [-42.0, -16.8, 4.07]
+        placement: "behind_tree"
+        foliage_attenuation: 0.90
+        vantage_hint_angle: -0.45
+        standoff_m: 1.55
+        description: "Coqui frog hidden behind lakeshore tree trunk"
+      - id: "frog_inside_bush"
+        name: "coqui_frog_inside_bush"
+        pos: [-44.2, -18.8, 4.11]
+        obstacle_pos: [-44.2, -18.8, 4.11]
+        placement: "inside_bush"
+        foliage_attenuation: 0.78
+        vantage_hint_angle: 1.85
+        standoff_m: 1.85
+        description: "Coqui frog inside dense untraversable lakeshore bush cluster"
+      - id: "frog_behind_object"
+        name: "coqui_frog_behind_object"
+        pos: [-39.0, -14.0, 4.08]
+        obstacle_pos: [-39.8, -14.2, 4.04]
+        placement: "behind_object"
+        foliage_attenuation: 0.92
+        vantage_hint_angle: 0.45
+        standoff_m: 1.55
+        description: "Coqui frog behind a lakeshore boulder obstacle"
+      - id: "frog_on_tree"
+        name: "coqui_frog_on_tree"
+        pos: [-44.0, -11.2, 5.17]
+        obstacle_pos: [-44.0, -11.2, 3.62]
+        placement: "on_tree"
+        foliage_attenuation: 0.94
+        vantage_hint_angle: -1.95
+        standoff_m: 2.15
+        description: "Coqui frog perched 1.55m high in lakeshore tree (requires upward PTZ tilt)"
+
+  hill:
+    spawn: [43.0, -13.0, 2.45, -3.0]
+    frogs:
+      - id: "frog_open"
+        name: "coqui_frog_open"
+        pos: [39.8, -11.2, 2.63]
+        placement: "open"
+        foliage_attenuation: 1.0
+        vantage_hint_angle: -0.95
+        standoff_m: 1.45
+        description: "Small Coqui frog in open hillside clearing"
+      - id: "frog_behind_tree"
+        name: "coqui_frog_behind_tree"
+        pos: [38.5, -15.1, 2.71]
+        obstacle_pos: [39.2, -14.8, 2.66]
+        placement: "behind_tree"
+        foliage_attenuation: 0.90
+        vantage_hint_angle: -2.45
+        standoff_m: 1.55
+        description: "Coqui frog hidden behind hillside tree trunk"
+      - id: "frog_inside_bush"
+        name: "coqui_frog_inside_bush"
+        pos: [40.8, -16.8, 2.98]
+        obstacle_pos: [40.8, -16.8, 2.98]
+        placement: "inside_bush"
+        foliage_attenuation: 0.78
+        vantage_hint_angle: 1.25
+        standoff_m: 1.85
+        description: "Coqui frog inside dense untraversable hillside dry_bush thicket"
+      - id: "frog_behind_object"
+        name: "coqui_frog_behind_object"
+        pos: [36.4, -12.3, 2.50]
+        obstacle_pos: [37.2, -12.5, 2.48]
+        placement: "behind_object"
+        foliage_attenuation: 0.92
+        vantage_hint_angle: 2.45
+        standoff_m: 1.55
+        description: "Coqui frog behind a hillside rock outcrop obstacle"
+      - id: "frog_on_tree"
+        name: "coqui_frog_on_tree"
+        pos: [40.5, -9.6, 4.40]
+        obstacle_pos: [40.5, -9.6, 2.85]
+        placement: "on_tree"
+        foliage_attenuation: 0.94
+        vantage_hint_angle: -1.15
+        standoff_m: 2.15
+        description: "Coqui frog perched 1.55m high on hillside tree branch"
+
+  forest:
+    spawn: [48.0, 2.1, 2.75, -3.13]
+    frogs:
+      - id: "frog_open"
+        name: "coqui_frog_open"
+        pos: [44.5, 3.8, 2.68]
+        placement: "open"
+        foliage_attenuation: 1.0
+        vantage_hint_angle: -1.05
+        standoff_m: 1.45
+        description: "Small Coqui frog in open forest glade"
+      - id: "frog_behind_tree"
+        name: "coqui_frog_behind_tree"
+        pos: [42.8, -0.1, 2.75]
+        obstacle_pos: [43.5, 0.2, 2.76]
+        placement: "behind_tree"
+        foliage_attenuation: 0.90
+        vantage_hint_angle: -2.45
+        standoff_m: 1.55
+        description: "Coqui frog hidden behind pine tree trunk"
+      - id: "frog_inside_bush"
+        name: "coqui_frog_inside_bush"
+        pos: [45.0, 5.8, 2.77]
+        obstacle_pos: [45.0, 5.8, 2.77]
+        placement: "inside_bush"
+        foliage_attenuation: 0.78
+        vantage_hint_angle: -1.25
+        standoff_m: 1.85
+        description: "Coqui frog inside dense untraversable forest bush thicket"
+      - id: "frog_behind_object"
+        name: "coqui_frog_behind_object"
+        pos: [40.4, 3.0, 2.75]
+        obstacle_pos: [41.2, 2.8, 2.67]
+        placement: "behind_object"
+        foliage_attenuation: 0.92
+        vantage_hint_angle: 2.45
+        standoff_m: 1.55
+        description: "Coqui frog behind a fallen forest log barrier"
+      - id: "frog_on_tree"
+        name: "coqui_frog_on_tree"
+        pos: [43.8, -1.6, 4.23]
+        obstacle_pos: [43.8, -1.6, 2.68]
+        placement: "on_tree"
+        foliage_attenuation: 0.94
+        vantage_hint_angle: 1.15
+        standoff_m: 2.15
+        description: "Coqui frog perched 1.55m high on forest pine tree branch"

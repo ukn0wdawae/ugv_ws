@@ -13,6 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-xacro \
       ros-humble-teleop-twist-keyboard \
       ros-humble-rviz2 \
+      ros-humble-navigation2 \
+      ros-humble-nav2-bringup \
+      ros-humble-slam-toolbox \
+      ros-humble-rtabmap-ros \
+      ros-humble-robot-localization \
       python3-colcon-common-extensions \
       python3-pip \
       python3-numpy \
@@ -37,7 +42,7 @@ RUN chmod +x /entrypoint.sh
 RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc && \
     echo '[ -f /root/ugv_ws/install/setup.bash ] && source /root/ugv_ws/install/setup.bash' >> /root/.bashrc && \
     echo 'export UGV_MODEL=${UGV_MODEL:-ugv_rover}' >> /root/.bashrc && \
-    echo 'export GAZEBO_MODEL_PATH=/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:${GAZEBO_MODEL_PATH}' >> /root/.bashrc
+    echo 'export GAZEBO_MODEL_PATH=/root/ugv_ws/gazebo_models:/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:${GAZEBO_MODEL_PATH}:/usr/share/gazebo-11/models' >> /root/.bashrc
 
 WORKDIR /root/ugv_ws
 ENTRYPOINT ["/entrypoint.sh"]

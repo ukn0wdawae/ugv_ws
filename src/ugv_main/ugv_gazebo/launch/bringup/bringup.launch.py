@@ -1,83 +1,108 @@
 #!/usr/bin/env python3
-#
-# Copyright 2019 ROBOTIS CO., LTD.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# Authors: Joep Tool
-
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch.actions import ExecuteProcess
 
-def generate_launch_description():
-    # Get the directory of the launch file
-    launch_file_dir = os.path.join(get_package_share_directory('ugv_gazebo'), 'launch/bringup')
-    # Get the directory of the gazebo_ros package
+
+def _configure_gazebo_env(ugv_model: str):
+    pkg_ugv_gazebo = get_package_share_directory('ugv_gazebo')
+    pkg_ugv_desc = get_package_share_directory('ugv_description')
+    ws_root = os.path.abspath(os.path.join(pkg_ugv_gazebo, '..', '..', '..', '..'))
+
+    model_paths = [
+        os.path.dirname(pkg_ugv_desc),
+        os.path.join(pkg_ugv_gazebo, 'models'),
+        os.path.join(ws_root, 'gazebo_models'),
+        os.path.expanduser('~/.gazebo/models'),
+        '/usr/share/gazebo-11/models',
+    ]
+    existing = [p for p in os.environ.get('GAZEBO_MODEL_PATH', '').split(':') if p]
+    for p in reversed(model_paths):
+        if os.path.isdir(p) and p not in existing:
+            existing.insert(0, p)
+
+    os.environ['GAZEBO_MODEL_PATH'] = ':'.join(existing)
+    os.environ['GAZEBO_MODEL_DATABASE_URI'] = ''
+    os.environ['UGV_MODEL'] = ugv_model
+
+
+def _launch_setup(context, *args, **kwargs):
+    default_model = os.environ.get('UGV_MODEL', 'ugv_pro_audio')
+    ugv_model = LaunchConfiguration('ugv_model').perform(context).strip() or default_model
+    _configure_gazebo_env(ugv_model)
+
+    launch_file_dir = os.path.join(get_package_share_directory('ugv_gazebo'), 'launch', 'bringup')
     pkg_gazebo_ros = get_package_share_directory('gazebo_ros')
 
-    # Get the use_sim_time parameter from the launch file
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
+    gui = LaunchConfiguration('gui').perform(context).strip().lower() in ('true', '1', 'yes')
 
-    # Get the world file
     world = os.path.join(
         get_package_share_directory('ugv_gazebo'),
         'worlds',
         'ugv_world.world'
     )
 
-    # Include the gzserver launch file
-    gzserver_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')
-        ),
-        launch_arguments={'world': world}.items()
-    )
-
-    # Include the gzclient launch file
-    gzclient_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_gazebo_ros, 'launch', 'gzclient.launch.py')
+    actions = [
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')
+            ),
+            launch_arguments={'world': world}.items()
         )
-    )
-            
-    # Include the robot_state_publisher launch file
-    robot_state_publisher_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(launch_file_dir, 'robot_state_publisher.launch.py')
-        ),
-        launch_arguments={'use_sim_time': use_sim_time}.items()
-    )
+    ]
 
-    # Include the spawn_ugv launch file
-    spawn_ugv_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(launch_file_dir, 'spawn_ugv.launch.py')
+    if gui:
+        actions.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(pkg_gazebo_ros, 'launch', 'gzclient.launch.py')
+                )
+            )
+        )
+
+    actions.append(
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(launch_file_dir, 'robot_state_publisher.launch.py')
+            ),
+            launch_arguments={'use_sim_time': use_sim_time}.items()
         )
     )
 
-    # Create a launch description
-    ld = LaunchDescription()
+    actions.append(
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(launch_file_dir, 'spawn_ugv.launch.py')
+            ),
+            launch_arguments={
+                'x_pose': LaunchConfiguration('x_pose'),
+                'y_pose': LaunchConfiguration('y_pose'),
+                'z_pose': LaunchConfiguration('z_pose'),
+                'yaw_pose': LaunchConfiguration('yaw_pose'),
+            }.items(),
+        )
+    )
 
-    # Add the commands to the launch description
-    ld.add_action(gzserver_cmd)
-    ld.add_action(gzclient_cmd)
-    ld.add_action(robot_state_publisher_cmd)
-    ld.add_action(spawn_ugv_cmd)
+    return actions
 
-    return ld
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'ugv_model',
+            default_value=os.environ.get('UGV_MODEL', 'ugv_pro_audio'),
+            description='UGV model to spawn (default: ugv_pro_audio)',
+        ),
+        DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument('gui', default_value='true'),
+        DeclareLaunchArgument('x_pose', default_value='0.0'),
+        DeclareLaunchArgument('y_pose', default_value='0.0'),
+        DeclareLaunchArgument('z_pose', default_value='0.08'),
+        DeclareLaunchArgument('yaw_pose', default_value='0.0'),
+        OpaqueFunction(function=_launch_setup),
+    ])

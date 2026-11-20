@@ -10,11 +10,12 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     ld = LaunchDescription()
-    config = os.path.join(
-        get_package_share_directory("explore_lite"), "config", "params.yaml"
+    default_config = os.path.join(
+        get_package_share_directory("explore_lite"), "config", "explore_rtabmap.yaml"
     )
     use_sim_time = LaunchConfiguration("use_sim_time")
     namespace = LaunchConfiguration("namespace")
+    params_file = LaunchConfiguration("params_file")
 
     declare_use_sim_time_argument = DeclareLaunchArgument(
         "use_sim_time", default_value="true", description="Use simulation/Gazebo clock"
@@ -23,6 +24,11 @@ def generate_launch_description():
         "namespace",
         default_value="",
         description="Namespace for the explore node",
+    )
+    declare_params_file_argument = DeclareLaunchArgument(
+        "params_file",
+        default_value=default_config,
+        description="Explore params file (default: RTAB-Map /map frontiers)",
     )
 
     # Map fully qualified names to relative ones so the node's namespace can be prepended.
@@ -36,11 +42,12 @@ def generate_launch_description():
         name="explore_node",
         namespace=namespace,
         executable="explore",
-        parameters=[config, {"use_sim_time": use_sim_time}],
+        parameters=[params_file, {"use_sim_time": use_sim_time}],
         output="screen",
         remappings=remappings,
     )
     ld.add_action(declare_use_sim_time_argument)
     ld.add_action(declare_namespace_argument)
+    ld.add_action(declare_params_file_argument)
     ld.add_action(node)
     return ld

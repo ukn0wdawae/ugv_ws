@@ -8,7 +8,7 @@ source /opt/ros/humble/setup.bash
 
 export UGV_MODEL="${UGV_MODEL:-ugv_rover}"
 export GAZEBO_MODEL_DATABASE_URI=""
-export GAZEBO_MODEL_PATH="/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:${GAZEBO_MODEL_PATH:-}"
+export GAZEBO_MODEL_PATH="/root/ugv_ws/gazebo_models:/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:${GAZEBO_MODEL_PATH:-}:/usr/share/gazebo-11/models"
 
 # Mesh package expected by model://ugv_description/...
 if [ ! -d /root/.gazebo/models/ugv_description ]; then
@@ -17,9 +17,10 @@ if [ ! -d /root/.gazebo/models/ugv_description ]; then
   unzip -qo /root/ugv_ws/ugv_description.zip -d /root/.gazebo/models
 fi
 
-if [ ! -f /root/ugv_ws/install/setup.bash ]; then
-  echo "Building ugv_gazebo (first time) ..."
-  colcon build --packages-select ugv_gazebo --symlink-install
+if [ ! -f /root/ugv_ws/install/setup.bash ] \
+   || [ ! -d "/root/ugv_ws/install/ugv_gazebo/share/ugv_gazebo/models/${UGV_MODEL}" ]; then
+  echo "Building ugv_description and ugv_gazebo ..."
+  colcon build --packages-select ugv_description ugv_gazebo --symlink-install
 fi
 
 source /root/ugv_ws/install/setup.bash

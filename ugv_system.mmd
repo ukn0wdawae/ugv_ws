@@ -1,0 +1,121 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Helvetica, Arial, sans-serif",
+    "fontSize": "18px",
+    "primaryColor": "#ffffff",
+    "primaryTextColor": "#111111",
+    "primaryBorderColor": "#333333",
+    "lineColor": "#222222",
+    "secondaryColor": "#f4f4f4",
+    "tertiaryColor": "#ffffff",
+    "clusterBkg": "#f6f6f6",
+    "clusterBorder": "#666666"
+  },
+  "flowchart": {
+    "htmlLabels": true,
+    "curve": "linear",
+    "nodeSpacing": 16,
+    "rankSpacing": 20,
+    "padding": 6,
+    "useMaxWidth": false,
+    "wrappingWidth": 260
+  }
+}}%%
+flowchart TB
+  subgraph op [Operator]
+    direction LR
+    RV[RViz / rtabmap_viz]
+    KB["keyboard_ctrl / joy_ctrl / web"]
+    BC[behavior_ctrl]
+  end
+
+  subgraph mission [Mission — run exactly one]
+    direction LR
+    EL["explore_lite<br/>/map /map_updates → navigate_to_pose<br/>explore/frontiers  explore/resume"]
+    VC["visual_coverage<br/>/map /map_updates → /navigate_to_pose + /spin<br/>coverage_markers"]
+  end
+
+  subgraph nav [Nav2  navigation_launch.py + slam_nav.yaml]
+    direction TB
+    BT["bt_navigator<br/>/navigate_to_pose  /navigate_through_poses"]
+    PL["planner_server  NavfnPlanner"]
+    CT["controller_server  DWB + RotationShim<br/>or TEB via rtabmap_teb.yaml"]
+    BH["behavior_server  /spin /backup /wait /drive_on_heading"]
+    VS[velocity_smoother]
+    GC["global_costmap  map + /scan"]
+    LC["local_costmap  odom + /scan"]
+    BT --> PL
+    BT --> CT
+    BT --> BH
+    GC --> PL
+    LC --> CT
+    CT -->|/cmd_vel_nav| VS
+    BH -->|/cmd_vel_nav| VS
+  end
+
+  subgraph slam [RTAB-Map SLAM]
+    direction TB
+    SYNC[rtabmap_sync rgbd_sync]
+    RT["rtabmap  ICP lidar neighbor links<br/>strict visual loops  Grid 5 cm from lidar"]
+    MAP["/map OccupancyGrid TRANSIENT_LOCAL"]
+    DB["~/.ros/rtabmap.db"]
+    TFmo[TF map → odom]
+    SYNC --> RT
+    RT --> MAP
+    RT --> DB
+    RT --> TFmo
+  end
+
+  subgraph tf [TF tree]
+    T["map → odom → base_footprint → base_link<br/>→ base_lidar_link / base_imu_link / 3d_camera_link / gimbal"]
+  end
+
+  subgraph plat [Platform — pick one]
+    direction TB
+    subgraph gz [Gazebo Classic]
+      direction TB
+      GZS[gzserver ugv_world.world]
+      SCAN_G[ray /scan]
+      CAM_G["depth cam  /camera/image_raw<br/>/camera/depth/image_raw  /camera/camera_info"]
+      IMU_G[IMU /imu]
+      DRV_G["diff_drive  /cmd_vel  /odom<br/>TF odom → base_footprint"]
+      CLK["/clock"]
+      GZS --- SCAN_G
+      GZS --- CAM_G
+      GZS --- IMU_G
+      GZS --- DRV_G
+    end
+    subgraph hw [Real UGV UART /dev/ttyAMA0 or ttyTHS1]
+      direction TB
+      BR[ugv_bringup]
+      DR[ugv_driver]
+      LD["ldlidar LD06/LD19/STL27L  /scan"]
+      OAK["OAK-D Lite  oak/rgb/*  oak/stereo/image_raw"]
+      BN[base_node]
+      EKF["optional EKF  /odom"]
+      UART[chassis MCU]
+      BR -->|/imu/data_raw /odom/odom_raw /voltage| BN
+      BN --> EKF
+      DR -->|JSON T=13| UART
+    end
+  end
+
+  SCAN_G --> RT
+  CAM_G --> SYNC
+  IMU_G -.-> RT
+  DRV_G --> RT
+  LD --> RT
+  OAK --> SYNC
+  EKF --> RT
+
+  MAP --> GC
+  MAP --> EL
+  MAP --> VC
+  MAP --> RV
+  EL --> BT
+  VC --> BT
+  VS -->|/cmd_vel| DRV_G
+  VS -->|/cmd_vel| DR
+  KB -->|/cmd_vel| DRV_G
+  TFmo --> T

@@ -1,0 +1,162 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="coqui_frog">
+    <static>1</static>
+    <link name="frog_link">
+      <pose>0 0 0 0 0 0</pose>
+
+      <!-- Physical & LiDAR/RGB-D obstacle collision so the robot never drives through the frog
+           and Nav2 / RTAB-Map costmaps register the frog's spot as a non-traversable obstacle -->
+      <collision name="frog_obstacle_collision">
+        <pose>0 0 0.17 0 0 0</pose>
+        <laser_retro>100.0</laser_retro>
+        <geometry>
+          <cylinder>
+            <radius>0.14</radius>
+            <length>0.34</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>100000.0</kp>
+              <kd>100.0</kd>
+            </ode>
+          </contact>
+          <friction>
+            <ode>
+              <mu>1.0</mu>
+              <mu2>1.0</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+
+      <!-- Small natural mossy stone/leaf perch base (radius 8.5 cm, height 3.2 cm) -->
+      <visual name="perch_stone_visual">
+        <pose>0 0 0.016 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.085</radius>
+            <length>0.032</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.28 0.32 0.24 1</ambient>
+          <diffuse>0.34 0.38 0.28 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+
+      <!-- Realistic small Coqui frog (~4.8 cm body length) -->
+      <!-- Main frog torso (tilted slightly up in calling posture) -->
+      <visual name="body_visual">
+        <pose>0 0 0.048 0 -0.35 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.022</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <ambient>0.05 0.92 0.15 1</ambient>
+          <diffuse>0.05 0.98 0.15 1</diffuse>
+          <specular>0.3 0.5 0.3 1</specular>
+          <emissive>0.05 0.78 0.10 1</emissive>
+        </material>
+      </visual>
+
+      <!-- Head -->
+      <visual name="head_visual">
+        <pose>0.017 0 0.062 0 -0.2 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.016</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <ambient>0.05 0.95 0.18 1</ambient>
+          <diffuse>0.05 1.00 0.18 1</diffuse>
+          <specular>0.3 0.5 0.3 1</specular>
+          <emissive>0.05 0.82 0.12 1</emissive>
+        </material>
+      </visual>
+
+      <!-- Inflated Coqui Vocal Sac (bright golden yellow) -->
+      <visual name="vocal_sac_visual">
+        <pose>0.025 0 0.049 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.015</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <ambient>1.0 0.88 0.0 1</ambient>
+          <diffuse>1.0 0.92 0.05 1</diffuse>
+          <specular>0.5 0.5 0.2 1</specular>
+          <emissive>0.92 0.78 0.0 1</emissive>
+        </material>
+      </visual>
+
+      <!-- Left Bulging Eye -->
+      <visual name="eye_left_visual">
+        <pose>0.023 0.010 0.075 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.0055</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <ambient>1.0 0.15 0.05 1</ambient>
+          <diffuse>1.0 0.20 0.05 1</diffuse>
+          <emissive>0.85 0.1 0.0 1</emissive>
+        </material>
+      </visual>
+
+      <!-- Right Bulging Eye -->
+      <visual name="eye_right_visual">
+        <pose>0.023 -0.010 0.075 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.0055</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <ambient>1.0 0.15 0.05 1</ambient>
+          <diffuse>1.0 0.20 0.05 1</diffuse>
+          <emissive>0.85 0.1 0.0 1</emissive>
+        </material>
+      </visual>
+
+      <!-- Folded Hind Legs -->
+      <visual name="leg_left_visual">
+        <pose>-0.010 0.019 0.038 0.3 0.4 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.0085</radius>
+            <length>0.028</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.04 0.85 0.12 1</ambient>
+          <diffuse>0.04 0.90 0.12 1</diffuse>
+          <emissive>0.04 0.65 0.08 1</emissive>
+        </material>
+      </visual>
+
+      <visual name="leg_right_visual">
+        <pose>-0.010 -0.019 0.038 -0.3 0.4 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.0085</radius>
+            <length>0.028</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.04 0.85 0.12 1</ambient>
+          <diffuse>0.04 0.90 0.12 1</diffuse>
+          <emissive>0.04 0.65 0.08 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

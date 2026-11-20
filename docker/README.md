@@ -45,7 +45,7 @@ cd /root/ugv_ws
 source /opt/ros/humble/setup.bash
 export UGV_MODEL=ugv_rover
 export GAZEBO_MODEL_DATABASE_URI=""
-export GAZEBO_MODEL_PATH=/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:$GAZEBO_MODEL_PATH
+export GAZEBO_MODEL_PATH=/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:$GAZEBO_MODEL_PATH:/usr/share/gazebo-11/models
 
 mkdir -p /root/.gazebo/models
 unzip -qo ugv_description.zip -d /root/.gazebo/models

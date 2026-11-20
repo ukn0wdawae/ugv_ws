@@ -1,0 +1,1284 @@
+<?xml version='1.0'?>
+<sdf version='1.5'>
+  <model name='ugv_pro_audio'>
+    <pose>0.0 0.0 0.0 0.0 0.0 0.0</pose>
+
+    <link name='base_footprint'/>
+
+    <link name='base_link'>
+      <pose relative_to='base_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 -0.015 0 0 0</pose>
+        <mass>2.36957877610872</mass>
+        <inertia>
+          <ixx>0.00651567554169617</ixx>
+          <ixy>-5.86655425789789E-13</ixy>
+          <ixz>3.77886436056975E-05</ixz>
+          <iyy>0.00933991752413667</iyy>
+          <iyz>-2.53116742521487E-11</iyz>
+          <izz>0.0121583506563461</izz>
+        </inertia>
+      </inertial>
+      <visual name='base_link_visual'>
+        <pose relative_to='base_joint'>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/base_link_chassis.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <!-- Raised chassis collision box with 6 cm ground clearance so only the 6 tires contact terrain -->
+      <collision name='base_link_collision'>
+        <pose relative_to='base_joint'>0 0 0.01 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.22 0.14 0.06</size>
+          </box>
+        </geometry>
+      </collision>
+      <!-- Roll bar protection over upper deck -->
+      <collision name='roll_bar_collision'>
+        <pose relative_to='base_joint'>-0.03046 0 0.055 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.12 0.12 0.03</size>
+          </box>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- ==================== LAYER 4: REALISTIC 6-AXIS IMU WITH BIAS DRIFT ==================== -->
+    <link name='base_imu_link'>
+      <pose relative_to='imu_joint'>0 0 0 0 0 0</pose>
+      <sensor name='ugv_imu' type='imu'>
+        <always_on>true</always_on>
+        <update_rate>50</update_rate>
+        <imu>
+          <angular_velocity>
+            <x>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>2e-4</stddev>
+                <bias_mean>0.00005</bias_mean>
+                <bias_stddev>0.00002</bias_stddev>
+                <dynamic_bias_stddev>0.00001</dynamic_bias_stddev>
+                <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+              </noise>
+            </x>
+            <y>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>2e-4</stddev>
+                <bias_mean>0.00005</bias_mean>
+                <bias_stddev>0.00002</bias_stddev>
+                <dynamic_bias_stddev>0.00001</dynamic_bias_stddev>
+                <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+              </noise>
+            </y>
+            <z>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>2e-4</stddev>
+                <bias_mean>0.00005</bias_mean>
+                <bias_stddev>0.00002</bias_stddev>
+                <dynamic_bias_stddev>0.00001</dynamic_bias_stddev>
+                <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+              </noise>
+            </z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>1.7e-2</stddev>
+                <bias_mean>0.003</bias_mean>
+                <bias_stddev>0.001</bias_stddev>
+                <dynamic_bias_stddev>0.0005</dynamic_bias_stddev>
+                <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+              </noise>
+            </x>
+            <y>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>1.7e-2</stddev>
+                <bias_mean>0.003</bias_mean>
+                <bias_stddev>0.001</bias_stddev>
+                <dynamic_bias_stddev>0.0005</dynamic_bias_stddev>
+                <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+              </noise>
+            </y>
+            <z>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>1.7e-2</stddev>
+                <bias_mean>0.003</bias_mean>
+                <bias_stddev>0.001</bias_stddev>
+                <dynamic_bias_stddev>0.0005</dynamic_bias_stddev>
+                <dynamic_bias_correlation_time>300.0</dynamic_bias_correlation_time>
+              </noise>
+            </z>
+          </linear_acceleration>
+        </imu>
+        <plugin filename='libgazebo_ros_imu_sensor.so' name='imu_plugin'>
+          <ros>
+            <remapping>~/out:=imu</remapping>
+          </ros>
+        </plugin>
+      </sensor>
+    </link>
+
+    <!-- ==================== LAYER 2: TRUE 6-WHEEL SKID-STEER PHYSICS ==================== -->
+    <!-- Note on ODE Anisotropic Coulomb Friction:
+         Each wheel joint has roll=1.5708 and axis=(0, 0, -1), so the link's local +Z axis (0 0 1)
+         is the wheel axle (lateral direction), which is INVARIANT as the wheel spins.
+         Setting <fdir1>0 0 1</fdir1> with pure Coulomb friction (slip1=0.0, slip2=0.0) aligns:
+           - fdir1 (mu=0.85, slip1=0.0): LATERAL tire shoulder grip (holds slopes >40 deg without
+             creeping while allowing 6-wheel skid-steer turning under motor torque)
+           - fdir2 = normal x fdir1 (mu2=1.05, slip2=0.0): LONGITUDINAL rubber lug tread grip
+             (allows each world surface material's mu2 in [0.72..1.00] to govern real traction
+             via Gazebo's min(mu_wheel, mu_ground) contact rule) -->
+
+    <!-- 1. Left Front Wheel -->
+    <link name='left_up_wheel_link'>
+      <pose relative_to='left_up_wheel_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <mass>0.207085933743005</mass>
+        <inertia>
+          <ixx>0.000116541923504163</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000170742352371108</iyy>
+          <iyz>0</iyz>
+          <izz>0.000116541923504163</izz>
+        </inertia>
+      </inertial>
+      <visual name='left_up_wheel_link_visual'>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/left_up_wheel_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name='left_up_wheel_link_collision'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.040</radius>
+          </sphere>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>500000.0</kp>
+              <kd>50.0</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.1</max_vel>
+            </ode>
+          </contact>
+          <bounce>
+            <restitution_coefficient>0.0</restitution_coefficient>
+            <threshold>1e+06</threshold>
+          </bounce>
+          <friction>
+            <torsional>
+              <coefficient>0.25</coefficient>
+              <use_patch_radius>1</use_patch_radius>
+              <patch_radius>0.012</patch_radius>
+              <surface_radius>0.040</surface_radius>
+              <ode>
+                <slip>0.0</slip>
+              </ode>
+            </torsional>
+            <ode>
+              <fdir1>0 0 1</fdir1>
+              <mu>0.85</mu>
+              <mu2>1.05</mu2>
+              <slip1>0.0</slip1>
+              <slip2>0.0</slip2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+    </link>
+
+    <!-- 2. Left Middle Wheel -->
+    <link name='left_mid_wheel_link'>
+      <pose relative_to='left_mid_wheel_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <mass>0.207085933743005</mass>
+        <inertia>
+          <ixx>0.000116541923504163</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000170742352371108</iyy>
+          <iyz>0</iyz>
+          <izz>0.000116541923504163</izz>
+        </inertia>
+      </inertial>
+      <visual name='left_mid_wheel_link_visual'>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/left_up_wheel_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name='left_mid_wheel_link_collision'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.040</radius>
+          </sphere>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>500000.0</kp>
+              <kd>50.0</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.1</max_vel>
+            </ode>
+          </contact>
+          <bounce>
+            <restitution_coefficient>0.0</restitution_coefficient>
+            <threshold>1e+06</threshold>
+          </bounce>
+          <friction>
+            <torsional>
+              <coefficient>0.25</coefficient>
+              <use_patch_radius>1</use_patch_radius>
+              <patch_radius>0.012</patch_radius>
+              <surface_radius>0.040</surface_radius>
+              <ode>
+                <slip>0.0</slip>
+              </ode>
+            </torsional>
+            <ode>
+              <fdir1>0 0 1</fdir1>
+              <mu>0.85</mu>
+              <mu2>1.05</mu2>
+              <slip1>0.0</slip1>
+              <slip2>0.0</slip2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+    </link>
+
+    <!-- 3. Left Rear Wheel -->
+    <link name='left_down_wheel_link'>
+      <pose relative_to='left_down_wheel_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <mass>0.207085933743005</mass>
+        <inertia>
+          <ixx>0.000116541923504163</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000170742352371108</iyy>
+          <iyz>0</iyz>
+          <izz>0.000116541923504163</izz>
+        </inertia>
+      </inertial>
+      <visual name='left_down_wheel_link_visual'>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/left_down_wheel_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name='left_down_wheel_link_collision'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.040</radius>
+          </sphere>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>500000.0</kp>
+              <kd>50.0</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.1</max_vel>
+            </ode>
+          </contact>
+          <bounce>
+            <restitution_coefficient>0.0</restitution_coefficient>
+            <threshold>1e+06</threshold>
+          </bounce>
+          <friction>
+            <torsional>
+              <coefficient>0.25</coefficient>
+              <use_patch_radius>1</use_patch_radius>
+              <patch_radius>0.012</patch_radius>
+              <surface_radius>0.040</surface_radius>
+              <ode>
+                <slip>0.0</slip>
+              </ode>
+            </torsional>
+            <ode>
+              <fdir1>0 0 1</fdir1>
+              <mu>0.85</mu>
+              <mu2>1.05</mu2>
+              <slip1>0.0</slip1>
+              <slip2>0.0</slip2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+    </link>
+
+    <!-- 4. Right Front Wheel -->
+    <link name='right_up_wheel_link'>
+      <pose relative_to='right_up_wheel_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <mass>0.207085933743005</mass>
+        <inertia>
+          <ixx>0.000116541923504163</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000170742352371108</iyy>
+          <iyz>0</iyz>
+          <izz>0.000116541923504163</izz>
+        </inertia>
+      </inertial>
+      <visual name='right_up_wheel_link_visual'>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/right_up_wheel_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name='right_up_wheel_link_collision'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.040</radius>
+          </sphere>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>500000.0</kp>
+              <kd>50.0</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.1</max_vel>
+            </ode>
+          </contact>
+          <bounce>
+            <restitution_coefficient>0.0</restitution_coefficient>
+            <threshold>1e+06</threshold>
+          </bounce>
+          <friction>
+            <torsional>
+              <coefficient>0.25</coefficient>
+              <use_patch_radius>1</use_patch_radius>
+              <patch_radius>0.012</patch_radius>
+              <surface_radius>0.040</surface_radius>
+              <ode>
+                <slip>0.0</slip>
+              </ode>
+            </torsional>
+            <ode>
+              <fdir1>0 0 1</fdir1>
+              <mu>0.85</mu>
+              <mu2>1.05</mu2>
+              <slip1>0.0</slip1>
+              <slip2>0.0</slip2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+    </link>
+
+    <!-- 5. Right Middle Wheel -->
+    <link name='right_mid_wheel_link'>
+      <pose relative_to='right_mid_wheel_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <mass>0.207085933743005</mass>
+        <inertia>
+          <ixx>0.000116541923504163</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000170742352371108</iyy>
+          <iyz>0</iyz>
+          <izz>0.000116541923504163</izz>
+        </inertia>
+      </inertial>
+      <visual name='right_mid_wheel_link_visual'>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/right_up_wheel_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name='right_mid_wheel_link_collision'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.040</radius>
+          </sphere>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>500000.0</kp>
+              <kd>50.0</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.1</max_vel>
+            </ode>
+          </contact>
+          <bounce>
+            <restitution_coefficient>0.0</restitution_coefficient>
+            <threshold>1e+06</threshold>
+          </bounce>
+          <friction>
+            <torsional>
+              <coefficient>0.25</coefficient>
+              <use_patch_radius>1</use_patch_radius>
+              <patch_radius>0.012</patch_radius>
+              <surface_radius>0.040</surface_radius>
+              <ode>
+                <slip>0.0</slip>
+              </ode>
+            </torsional>
+            <ode>
+              <fdir1>0 0 1</fdir1>
+              <mu>0.85</mu>
+              <mu2>1.05</mu2>
+              <slip1>0.0</slip1>
+              <slip2>0.0</slip2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+    </link>
+
+    <!-- 6. Right Rear Wheel -->
+    <link name='right_down_wheel_link'>
+      <pose relative_to='right_down_wheel_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <mass>0.207085933743005</mass>
+        <inertia>
+          <ixx>0.000116541923504163</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000170742352371108</iyy>
+          <iyz>0</iyz>
+          <izz>0.000116541923504163</izz>
+        </inertia>
+      </inertial>
+      <visual name='right_down_wheel_link_visual'>
+        <pose>0 0 0 1.5708 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/right_down_wheel_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name='right_down_wheel_link_collision'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.040</radius>
+          </sphere>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>500000.0</kp>
+              <kd>50.0</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.1</max_vel>
+            </ode>
+          </contact>
+          <bounce>
+            <restitution_coefficient>0.0</restitution_coefficient>
+            <threshold>1e+06</threshold>
+          </bounce>
+          <friction>
+            <torsional>
+              <coefficient>0.25</coefficient>
+              <use_patch_radius>1</use_patch_radius>
+              <patch_radius>0.012</patch_radius>
+              <surface_radius>0.040</surface_radius>
+              <ode>
+                <slip>0.0</slip>
+              </ode>
+            </torsional>
+            <ode>
+              <fdir1>0 0 1</fdir1>
+              <mu>0.85</mu>
+              <mu2>1.05</mu2>
+              <slip1>0.0</slip1>
+              <slip2>0.0</slip2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+    </link>
+
+    <!-- ==================== FRONT 3D RGB-D DEPTH CAMERA ==================== -->
+    <link name='3d_camera_link'>
+      <pose relative_to='3d_camera_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.043316</mass>
+        <inertia>
+          <ixx>3.27216283333333E-05</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>3.87317233333333E-06</iyy>
+          <iyz>0</iyz>
+          <izz>3.09348433333333E-05</izz>
+        </inertia>
+      </inertial>
+      <visual name='3d_camera_link_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/3d_camera_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <sensor name="camera" type="depth">
+        <pose>0 0 0 0 0 0</pose>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <update_rate>15</update_rate>
+        <camera name="intel_realsense_r200">
+          <horizontal_fov>1.02974</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>10.0</far>
+          </clip>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.007</stddev>
+          </noise>
+        </camera>
+        <plugin name="camera_driver" filename="libgazebo_ros_camera.so">
+          <ros>
+          </ros>
+        </plugin>
+      </sensor>
+    </link>
+
+    <!-- ==================== 16-CHANNEL 360-DEGREE 3D LIDAR (/scan_cloud) ==================== -->
+    <link name='lidar_3d_link'>
+      <pose relative_to='lidar_3d_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.08</mass>
+        <inertia>
+          <ixx>2.5e-05</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>2.5e-05</iyy>
+          <iyz>0</iyz>
+          <izz>3.5e-05</izz>
+        </inertia>
+      </inertial>
+      <visual name='lidar_3d_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.024</radius>
+            <length>0.035</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/DarkGrey</name>
+          </script>
+        </material>
+      </visual>
+      <visual name='lidar_3d_window_visual'>
+        <pose>0 0 0.002 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.0245</radius>
+            <length>0.016</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Black</name>
+          </script>
+        </material>
+      </visual>
+
+      <sensor name='lidar_3d' type='ray'>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <pose>0 0 0.01 0 0 0</pose>
+        <update_rate>10</update_rate>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>360</samples>
+              <resolution>1.0</resolution>
+              <min_angle>-3.14159265</min_angle>
+              <max_angle>3.14159265</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>16</samples>
+              <resolution>1.0</resolution>
+              <min_angle>-0.174533</min_angle>
+              <max_angle>0.523599</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>0.22</min>
+            <max>30.0</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.008</stddev>
+          </noise>
+        </ray>
+        <plugin name='ugv_3d_lidar' filename='libgazebo_ros_ray_sensor.so'>
+          <ros>
+            <remapping>~/out:=scan_cloud</remapping>
+          </ros>
+          <output_type>sensor_msgs/PointCloud2</output_type>
+          <frame_name>lidar_3d_link</frame_name>
+        </plugin>
+      </sensor>
+    </link>
+
+    <!-- Multi-Constellation GNSS Receiver link (/gps/fix) -->
+    <link name='gps_link'>
+      <pose relative_to='gps_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.03</mass>
+        <inertia>
+          <ixx>4.0e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>4.0e-06</iyy>
+          <iyz>0</iyz>
+          <izz>6.0e-06</izz>
+        </inertia>
+      </inertial>
+      <visual name='gps_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.022</radius>
+            <length>0.018</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Green</name>
+          </script>
+        </material>
+      </visual>
+      <sensor name='ugv_gps' type='gps'>
+        <always_on>true</always_on>
+        <update_rate>10.0</update_rate>
+        <gps>
+          <position_sensing>
+            <horizontal>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.8</stddev>
+              </noise>
+            </horizontal>
+            <vertical>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>1.5</stddev>
+              </noise>
+            </vertical>
+          </position_sensing>
+          <velocity_sensing>
+            <horizontal>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.05</stddev>
+              </noise>
+            </horizontal>
+            <vertical>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.05</stddev>
+              </noise>
+            </vertical>
+          </velocity_sensing>
+        </gps>
+        <plugin name='gps_plugin' filename='libgazebo_ros_gps_sensor.so'>
+          <ros>
+            <remapping>~/out:=gps/fix</remapping>
+            <remapping>~/vel:=gps/vel</remapping>
+          </ros>
+          <frame_name>gps_link</frame_name>
+        </plugin>
+      </sensor>
+    </link>
+
+    <!-- ==================== OMNIDIRECTIONAL 5-CHANNEL 3D MICROPHONE ARRAY ==================== -->
+    <link name='audio_array_base_link'>
+      <pose relative_to='audio_array_base_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>1.0e-05</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>1.0e-05</iyy>
+          <iyz>0</iyz>
+          <izz>1.5e-05</izz>
+        </inertia>
+      </inertial>
+      <visual name='audio_hub_visual'>
+        <pose>-0.065 0 0.015 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.026</radius>
+            <length>0.012</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Blue</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+
+    <link name='mic_fl_link'>
+      <pose relative_to='mic_fl_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.002</mass>
+        <inertia>
+          <ixx>1e-07</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-07</iyy><iyz>0</iyz><izz>1e-07</izz>
+        </inertia>
+      </inertial>
+      <visual name='mic_fl_stalk'>
+        <pose>0 0 -0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.003</radius><length>0.02</length></cylinder></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
+      </visual>
+      <visual name='mic_fl_capsule'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><sphere><radius>0.007</radius></sphere></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Turquoise</name></script></material>
+      </visual>
+    </link>
+
+    <link name='mic_fr_link'>
+      <pose relative_to='mic_fr_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.002</mass>
+        <inertia>
+          <ixx>1e-07</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-07</iyy><iyz>0</iyz><izz>1e-07</izz>
+        </inertia>
+      </inertial>
+      <visual name='mic_fr_stalk'>
+        <pose>0 0 -0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.003</radius><length>0.02</length></cylinder></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
+      </visual>
+      <visual name='mic_fr_capsule'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><sphere><radius>0.007</radius></sphere></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Turquoise</name></script></material>
+      </visual>
+    </link>
+
+    <link name='mic_rl_link'>
+      <pose relative_to='mic_rl_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.002</mass>
+        <inertia>
+          <ixx>1e-07</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-07</iyy><iyz>0</iyz><izz>1e-07</izz>
+        </inertia>
+      </inertial>
+      <visual name='mic_rl_stalk'>
+        <pose>0 0 -0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.003</radius><length>0.02</length></cylinder></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
+      </visual>
+      <visual name='mic_rl_capsule'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><sphere><radius>0.007</radius></sphere></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Turquoise</name></script></material>
+      </visual>
+    </link>
+
+    <link name='mic_rr_link'>
+      <pose relative_to='mic_rr_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.002</mass>
+        <inertia>
+          <ixx>1e-07</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-07</iyy><iyz>0</iyz><izz>1e-07</izz>
+        </inertia>
+      </inertial>
+      <visual name='mic_rr_stalk'>
+        <pose>0 0 -0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.003</radius><length>0.02</length></cylinder></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
+      </visual>
+      <visual name='mic_rr_capsule'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><sphere><radius>0.007</radius></sphere></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Turquoise</name></script></material>
+      </visual>
+    </link>
+
+    <link name='mic_top_link'>
+      <pose relative_to='mic_top_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.002</mass>
+        <inertia>
+          <ixx>1e-07</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-07</iyy><iyz>0</iyz><izz>1e-07</izz>
+        </inertia>
+      </inertial>
+      <visual name='mic_top_stalk'>
+        <pose>0 0 -0.012 0 0 0</pose>
+        <geometry><cylinder><radius>0.003</radius><length>0.024</length></cylinder></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
+      </visual>
+      <visual name='mic_top_capsule'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><sphere><radius>0.008</radius></sphere></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Yellow</name></script></material>
+      </visual>
+    </link>
+
+    <!-- ==================== LAYER 3: 2-AXIS PAN-TILT CAMERA TURRET (REAL MASSES/INERTIAS) ==================== -->
+    <link name='pt_base_link'>
+      <pose relative_to='pt_base_link_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.109518186442022</mass>
+        <inertia>
+          <ixx>3.30168147078049E-05</ixx>
+          <ixy>0</ixy>
+          <ixz>-2.93137934608679E-06</ixz>
+          <iyy>5.1580984319637E-05</iyy>
+          <iyz>0</iyz>
+          <izz>4.86101329827052E-05</izz>
+        </inertia>
+      </inertial>
+      <visual name='pt_base_link_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/pt_base_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+
+    <link name='pt_link1'>
+      <pose relative_to='pt_base_link_to_pt_link1'>0 0 0 0 0 0</pose>
+      <gravity>0</gravity>
+      <inertial>
+        <pose>-0.003381 0 0.01761 0 0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>1.0e-03</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>1.0e-03</iyy>
+          <iyz>0</iyz>
+          <izz>1.0e-03</izz>
+        </inertia>
+      </inertial>
+      <visual name='pt_link1_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/pt_link1.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+
+    <link name='pt_link2'>
+      <pose relative_to='pt_link1_to_pt_link2'>0 0 0 0 0 0</pose>
+      <gravity>0</gravity>
+      <inertial>
+        <pose>0.023763 0.01126 0.02 0 0 0</pose>
+        <mass>0.0970496053012515</mass>
+        <inertia>
+          <ixx>1.0e-03</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>1.0e-03</iyy>
+          <iyz>0</iyz>
+          <izz>1.0e-03</izz>
+        </inertia>
+      </inertial>
+      <visual name='pt_link2_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/pt_link2.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+
+    <link name='pt_camera_link'>
+      <pose relative_to='pt_link2_to_pt_camera_link'>0 0 0 0 0 0</pose>
+      <gravity>0</gravity>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.015</mass>
+        <inertia>
+          <ixx>5.0e-04</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>5.0e-04</iyy>
+          <iyz>0</iyz>
+          <izz>5.0e-04</izz>
+        </inertia>
+      </inertial>
+      <visual name='pt_camera_link_visual'>
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://ugv_description/meshes/ugv_rover/pt_camera_link.stl</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <sensor name="pt_camera" type="camera">
+        <pose>0 0 0 0 0 0</pose>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <update_rate>15</update_rate>
+        <camera name="pt_camera">
+          <horizontal_fov>1.08</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>100</far>
+          </clip>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.005</stddev>
+          </noise>
+        </camera>
+        <plugin name="pt_camera_driver" filename="libgazebo_ros_camera.so">
+          <ros>
+          </ros>
+          <camera_name>pt_camera</camera_name>
+          <frame_name>pt_camera_link</frame_name>
+        </plugin>
+      </sensor>
+    </link>
+
+    <!-- ==================== JOINTS ==================== -->
+    <joint name='base_joint' type='fixed'>
+      <pose relative_to='base_footprint'>0.00046 0 0.08 0 0 0</pose>
+      <parent>base_footprint</parent>
+      <child>base_link</child>
+    </joint>
+
+    <joint name='imu_joint' type='fixed'>
+      <parent>base_footprint</parent>
+      <child>base_imu_link</child>
+      <pose relative_to='base_footprint'>0.00046 0 0.08 0 0 0</pose>
+    </joint>
+
+    <joint name='left_up_wheel_link_joint' type='revolute'>
+      <pose relative_to='base_footprint'>0.08596 0.08726 0.038788 1.5708 0 0</pose>
+      <parent>base_link</parent>
+      <child>left_up_wheel_link</child>
+      <axis>
+        <xyz>0 0 -1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='left_mid_wheel_link_joint' type='revolute'>
+      <pose relative_to='base_footprint'>0.00046 0.08726 0.038788 1.5708 0 0</pose>
+      <parent>base_link</parent>
+      <child>left_mid_wheel_link</child>
+      <axis>
+        <xyz>0 0 -1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='left_down_wheel_link_joint' type='revolute'>
+      <pose relative_to='base_footprint'>-0.08504 0.08726 0.038788 1.5708 0 0</pose>
+      <parent>base_link</parent>
+      <child>left_down_wheel_link</child>
+      <axis>
+        <xyz>0 0 -1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='right_up_wheel_link_joint' type='revolute'>
+      <pose relative_to='base_footprint'>0.08596 -0.08726 0.038788 1.5708 0 0</pose>
+      <parent>base_link</parent>
+      <child>right_up_wheel_link</child>
+      <axis>
+        <xyz>0 0 -1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='right_mid_wheel_link_joint' type='revolute'>
+      <pose relative_to='base_footprint'>0.00046 -0.08726 0.038788 1.5708 0 0</pose>
+      <parent>base_link</parent>
+      <child>right_mid_wheel_link</child>
+      <axis>
+        <xyz>0 0 -1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='right_down_wheel_link_joint' type='revolute'>
+      <pose relative_to='base_footprint'>-0.08504 -0.08726 0.038788 1.5708 0 0</pose>
+      <parent>base_link</parent>
+      <child>right_down_wheel_link</child>
+      <axis>
+        <xyz>0 0 -1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='3d_camera_link_joint' type='fixed'>
+      <pose relative_to='base_footprint'>0.06577 0 0.101953 0 0 0</pose>
+      <parent>base_footprint</parent>
+      <child>3d_camera_link</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='lidar_3d_joint' type='fixed'>
+      <pose relative_to='base_footprint'>0.040275 0 0.1375 0 0 0</pose>
+      <parent>base_footprint</parent>
+      <child>lidar_3d_link</child>
+    </joint>
+
+    <joint name='gps_joint' type='fixed'>
+      <pose relative_to='base_footprint'>-0.06454 0 0.146 0 0 0</pose>
+      <parent>base_footprint</parent>
+      <child>gps_link</child>
+    </joint>
+
+    <!-- Omnidirectional 5-Microphone Array Fixed Joints -->
+    <joint name='audio_array_base_joint' type='fixed'>
+      <pose relative_to='base_footprint'>0.0 0.0 0.115 0 0 0</pose>
+      <parent>base_footprint</parent>
+      <child>audio_array_base_link</child>
+    </joint>
+
+    <joint name='mic_fl_joint' type='fixed'>
+      <pose relative_to='audio_array_base_link'>0.095 0.075 0.0 0 0 0</pose>
+      <parent>audio_array_base_link</parent>
+      <child>mic_fl_link</child>
+    </joint>
+
+    <joint name='mic_fr_joint' type='fixed'>
+      <pose relative_to='audio_array_base_link'>0.095 -0.075 0.0 0 0 0</pose>
+      <parent>audio_array_base_link</parent>
+      <child>mic_fr_link</child>
+    </joint>
+
+    <joint name='mic_rl_joint' type='fixed'>
+      <pose relative_to='audio_array_base_link'>-0.095 0.075 0.0 0 0 0</pose>
+      <parent>audio_array_base_link</parent>
+      <child>mic_rl_link</child>
+    </joint>
+
+    <joint name='mic_rr_joint' type='fixed'>
+      <pose relative_to='audio_array_base_link'>-0.095 -0.075 0.0 0 0 0</pose>
+      <parent>audio_array_base_link</parent>
+      <child>mic_rr_link</child>
+    </joint>
+
+    <joint name='mic_top_joint' type='fixed'>
+      <pose relative_to='audio_array_base_link'>-0.065 0.0 0.040 0 0 0</pose>
+      <parent>audio_array_base_link</parent>
+      <child>mic_top_link</child>
+    </joint>
+
+    <!-- 2-Axis Pan-Tilt Turret Joints -->
+    <joint name='pt_base_link_joint' type='fixed'>
+      <pose relative_to='base_footprint'>-0.018432 0 0.12 0 0 0</pose>
+      <parent>base_footprint</parent>
+      <child>pt_base_link</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+      </axis>
+    </joint>
+
+    <joint name='pt_base_link_to_pt_link1' type='revolute'>
+      <pose relative_to='base_footprint'>-0.008281 0 0.168 0 0 0</pose>
+      <parent>pt_base_link</parent>
+      <child>pt_link1</child>
+      <axis>
+        <xyz>0 0 -1</xyz>
+        <limit>
+          <lower>-3.14159</lower>
+          <upper>3.14159</upper>
+          <effort>2.5</effort>
+          <velocity>3.0</velocity>
+        </limit>
+        <dynamics>
+          <damping>0.05</damping>
+          <friction>0.05</friction>
+        </dynamics>
+      </axis>
+    </joint>
+
+    <joint name='pt_link1_to_pt_link2' type='revolute'>
+      <pose relative_to='pt_link1'>0 0.02 0.043003 1.5708 0 0</pose>
+      <parent>pt_link1</parent>
+      <child>pt_link2</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-0.65</lower>
+          <upper>1.5708</upper>
+          <effort>2.5</effort>
+          <velocity>3.0</velocity>
+        </limit>
+        <dynamics>
+          <damping>0.05</damping>
+          <friction>0.05</friction>
+        </dynamics>
+      </axis>
+    </joint>
+
+    <joint name='pt_link2_to_pt_camera_link' type='fixed'>
+      <pose relative_to='pt_link2'>0.047686 -0.000569 0.02 -1.5708 0 0</pose>
+      <parent>pt_link2</parent>
+      <child>pt_camera_link</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+      </axis>
+    </joint>
+
+    <static>0</static>
+
+    <!-- 6-Wheel Skid-Steer Drive Plugin (3 Wheel Pairs) -->
+    <plugin name="skid_steer_drive_controller" filename="libgazebo_ros_diff_drive.so">
+      <update_rate>50</update_rate>
+      <updateRate>50</updateRate>
+
+      <num_wheel_pairs>3</num_wheel_pairs>
+
+      <!-- Front wheel pair -->
+      <left_joint>left_up_wheel_link_joint</left_joint>
+      <right_joint>right_up_wheel_link_joint</right_joint>
+
+      <!-- Middle wheel pair -->
+      <left_joint>left_mid_wheel_link_joint</left_joint>
+      <right_joint>right_mid_wheel_link_joint</right_joint>
+
+      <!-- Rear wheel pair -->
+      <left_joint>left_down_wheel_link_joint</left_joint>
+      <right_joint>right_down_wheel_link_joint</right_joint>
+
+      <!-- Kinematics (track width = 0.1745 m, tire diameter = 0.080 m) -->
+      <wheel_separation>0.175</wheel_separation>
+      <wheel_separation>0.175</wheel_separation>
+      <wheel_separation>0.175</wheel_separation>
+
+      <wheel_diameter>0.08</wheel_diameter>
+      <wheel_diameter>0.08</wheel_diameter>
+      <wheel_diameter>0.08</wheel_diameter>
+
+      <!-- Torque & acceleration limits -->
+      <max_wheel_torque>25</max_wheel_torque>
+      <max_wheel_acceleration>5.0</max_wheel_acceleration>
+
+      <!-- Odometry output -->
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>false</publish_wheel_tf>
+      <command_topic>cmd_vel</command_topic>
+      <odometry_topic>odom</odometry_topic>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+    </plugin>
+
+    <!-- Joint State Publisher for all 6 wheels + 2 Pan-Tilt joints -->
+    <plugin name="gazebo_ros_joint_state_publisher"
+      filename="libgazebo_ros_joint_state_publisher.so">
+      <ros>
+        <remapping>joint_states:=joint_states</remapping>
+      </ros>
+      <update_rate>30</update_rate>
+      <joint_name>left_up_wheel_link_joint</joint_name>
+      <joint_name>left_mid_wheel_link_joint</joint_name>
+      <joint_name>left_down_wheel_link_joint</joint_name>
+      <joint_name>right_up_wheel_link_joint</joint_name>
+      <joint_name>right_mid_wheel_link_joint</joint_name>
+      <joint_name>right_down_wheel_link_joint</joint_name>
+      <joint_name>pt_base_link_to_pt_link1</joint_name>
+      <joint_name>pt_link1_to_pt_link2</joint_name>
+    </plugin>
+
+    <!-- Pan-Tilt turret trajectory plugin -->
+    <plugin name="pt_joint_pose_trajectory"
+      filename="libgazebo_ros_joint_pose_trajectory.so">
+      <ros>
+        <remapping>set_joint_trajectory:=set_joint_trajectory</remapping>
+      </ros>
+      <update_rate>30</update_rate>
+    </plugin>
+
+    <!-- World-frame ground-truth pose for acoustic propagation simulator -->
+    <plugin name="ugv_p3d_ground_truth" filename="libgazebo_ros_p3d.so">
+      <ros>
+        <remapping>odom:=ugv_gt_odom</remapping>
+      </ros>
+      <body_name>base_footprint</body_name>
+      <frame_name>world</frame_name>
+      <update_rate>25.0</update_rate>
+      <gaussian_noise>0.0</gaussian_noise>
+    </plugin>
+  </model>
+</sdf>

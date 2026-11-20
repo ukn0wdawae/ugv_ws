@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# One-shot: build packages (if needed) and launch ugv_world + ugv_pro_audio.
+# Run inside the container (after ./docker/shell.sh).
+set -eo pipefail
+
+cd /root/ugv_ws
+source /opt/ros/humble/setup.bash
+
+export UGV_MODEL="${UGV_MODEL:-ugv_pro_audio}"
+export GAZEBO_MODEL_DATABASE_URI=""
+export GAZEBO_MODEL_PATH="/root/ugv_ws/install/ugv_description/share:/root/ugv_ws/gazebo_models:/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:${GAZEBO_MODEL_PATH:-}:/usr/share/gazebo-11/models"
+
+# Mesh package expected by model://ugv_description/...
+if [ ! -d /root/.gazebo/models/ugv_description ]; then
+  echo "Installing ugv_description meshes into ~/.gazebo/models ..."
+  mkdir -p /root/.gazebo/models
+  unzip -qo /root/ugv_ws/ugv_description.zip -d /root/.gazebo/models
+fi
+cp -f /root/ugv_ws/src/ugv_main/ugv_description/meshes/ugv_rover/base_link_chassis.stl \
+  /root/.gazebo/models/ugv_description/meshes/ugv_rover/ 2>/dev/null || true
+
+echo "Building ugv_description and ugv_gazebo ..."
+colcon build --packages-select ugv_description ugv_gazebo --symlink-install
+
+source /root/ugv_ws/install/setup.bash
+
+echo "Launching ugv_world + model=${UGV_MODEL}"
+exec ros2 launch ugv_gazebo bringup_ugv_pro_audio.launch.py ugv_model:="${UGV_MODEL}" "$@"
