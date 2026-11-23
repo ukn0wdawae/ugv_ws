@@ -64,6 +64,11 @@ class MicArrayLocalizerNode(Node):
         self.declare_parameter('max_stored_rays', 30)
         self.declare_parameter('global_frame', 'map')
         self.declare_parameter('array_frame', 'audio_array_base_link')
+        # Ray gating (0 = off). Once the buffer holds rays, a new bearing is only used if it points within
+        # this many degrees of the current estimate, so a different frog calling mid-hunt does not get
+        # mixed into the triangulation. Not applied when the estimate is closer than gate_min_range_m.
+        self.declare_parameter('ray_gate_deg', 0.0)
+        self.declare_parameter('gate_min_range_m', 1.5)
 
         self.snr_threshold_db = float(self.get_parameter('snr_threshold_db').value)
         self.min_baseline = float(self.get_parameter('min_baseline_for_convergence_m').value)
@@ -71,6 +76,9 @@ class MicArrayLocalizerNode(Node):
         self.max_rays = int(self.get_parameter('max_stored_rays').value)
         self.global_frame = self.get_parameter('global_frame').value
         self.array_frame = self.get_parameter('array_frame').value
+        self.ray_gate = math.radians(float(self.get_parameter('ray_gate_deg').value))
+        self.gate_min_range = float(self.get_parameter('gate_min_range_m').value)
+        self.rays_rejected = 0
 
         # TF2 buffer & listener
         self.tf_buffer = tf2_ros.Buffer()
@@ -131,6 +139,7 @@ class MicArrayLocalizerNode(Node):
         self.rays.clear()
         self.triangulated_pos = None
         self.uncertainty_m = 9.99
+        self.rays_rejected = 0
         ma = MarkerArray()
         m_del = Marker()
         m_del.action = Marker.DELETEALL
@@ -307,6 +316,20 @@ class MicArrayLocalizerNode(Node):
         rms_bp = float(np.sqrt(np.mean(bp_sig ** 2)))
         range_est = float(np.clip(REF_RMS_AT_1M / max(rms_bp, 1e-4), 0.5, 18.0))
 
+        if self.ray_gate > 0.0 and self.rays:
+            if self.triangulated_pos is not None:
+                ref = np.asarray(self.triangulated_pos, dtype=np.float64)
+            else:
+                r0 = self.rays[0]
+                ref = r0['origin'] + float(r0['range_est']) * r0['dir']
+            to_ref = ref[:2] - origin_map[:2]
+            if np.linalg.norm(to_ref) >= self.gate_min_range and np.linalg.norm(dir_map[:2]) > 1e-6:
+                dev = abs(math.atan2(math.sin(math.atan2(dir_map[1], dir_map[0]) - math.atan2(to_ref[1], to_ref[0])),
+                                     math.cos(math.atan2(dir_map[1], dir_map[0]) - math.atan2(to_ref[1], to_ref[0]))))
+                if dev > self.ray_gate:
+                    self.rays_rejected += 1
+                    return
+
         # Store ray (avoid storing duplicate rays from the exact same spot if we already have many)
         weight = float(np.clip((snr_db - self.snr_threshold_db) / 15.0, 0.2, 2.5))
         if len(self.rays) >= self.max_rays:
@@ -351,6 +374,9 @@ class MicArrayLocalizerNode(Node):
             'elevation_deg': round(math.degrees(el_rad), 1),
             'range_est_m': round(range_est, 2),
             'snr_db': round(snr_db, 1),
+            'rays_rejected': int(self.rays_rejected),
+            'ray_origin': [round(float(v), 3) for v in origin_map],
+            'ray_dir': [round(float(v), 4) for v in dir_map],
         }
         st_msg = String()
         st_msg.data = json.dumps(status)

@@ -1,0 +1,16 @@
+# Profile: big forest (forest.world / forest_coqui_survey.world), pine trunks, low bushes, tall grass,
+# rolling terrain. Merged on top of survey_base.yaml (`survey:`) and nav2_survey_base.yaml (`nav2:`).
+# Only put values here that differ from the base because of this environment.
+survey:
+  coqui_survey:
+    ros__parameters:
+      # The area the operator asks to survey (map frame). In the field this is drawn on a map before
+      # the mission; it says nothing about where frogs are.
+      survey_area: [18.0, 50.0, -15.0, 15.0]
+      max_mission_sec: 3600.0
+nav2:
+  local_costmap:
+    local_costmap:
+      ros__parameters:
+        inflation_layer:
+          inflation_radius: 0.45     # dense trunks: keep a little more room than the 0.55 default

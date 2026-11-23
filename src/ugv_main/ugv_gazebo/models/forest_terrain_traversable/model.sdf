@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="forest_terrain_traversable">
+    <static>true</static>
+    <link name="link">
+      <pose>0 0 -2 0 0 0</pose>
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://forest_terrain_traversable/meshes/terreno_traversable.dae</uri>
+            <scale>50 25 3</scale>
+          </mesh>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://forest_terrain_traversable/meshes/terreno_traversable.dae</uri>
+            <scale>50 25 3</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <script>
+            <uri>model://terrain/materials/scripts</uri>
+            <uri>model://terrain/materials/textures</uri>
+            <name>vrc/terrain</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

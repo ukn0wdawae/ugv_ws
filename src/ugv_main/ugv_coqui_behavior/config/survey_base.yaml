@@ -1,0 +1,79 @@
+# Coqui survey: robot-side parameters that do not depend on the environment.
+# Environment-specific values (survey area, costmap thresholds that depend on vegetation, ...) go in
+# config/profiles/<env>.yaml under `survey:` and are merged on top of this file at launch.
+#
+# Rule of thumb for what belongs where:
+#   here      robot facts (sizes, speeds, camera), acoustic geometry, mission logic
+#   profile   the area to survey and anything you had to change because of the terrain
+coqui_survey:
+  ros__parameters:
+    use_sim_time: true
+    # --- coverage: listening stations on a grid over the survey area
+    station_spacing_m: 6.0        # grid of candidate stations
+    cover_radius_m: 7.0           # a station "covers" cells this close (calls carry 20 m+, keep margin)
+    station_listen_sec: 8.0       # stand still and listen this long (frogs call in bouts)
+    snap_search_m: 2.0            # move a station onto free ground up to this far
+    failed_radius_m: 1.0
+    # --- costmap reading (Nav2 global costmap, 0..100)
+    costmap_topic: /global_costmap/costmap
+    lethal_cost: 65               # >= this is treated as not drivable for goal selection
+    clearance_m: 0.25             # robot half-diagonal ~0.17 m + margin
+    # --- detection / triangulation
+    min_detection_snr_db: 10.0
+    detections_to_trigger: 2      # consistent bearings within 4 s before starting a hunt
+    known_frog_radius_m: 2.0      # a call/estimate this close to a recorded frog is that frog
+    hunt_listen_sec: 5.0
+    step_min_m: 0.8
+    step_max_m: 1.8
+    step_angles: 12
+    keepout_m: 1.2                # never step closer to the estimate than this
+    approach_until_m: 5.0         # while farther than this, steps that get closer score higher
+    approach_gain_deg_per_m: 6.0
+    step_cost_deg_per_m: 4.0
+    max_steps: 8
+    # robust triangulation (survey_planning.robust_triangulate): the frog must lie on the bearing that
+    # started the hunt; bearings that do not agree with the best intersection are other frogs/noise
+    min_rays: 6                   # agreeing bearings needed
+    min_baseline_m: 1.0
+    min_parallax_deg: 15.0        # angle the listening places subtend at the frog
+    min_places: 3                 # distinct listening places among the agreeing bearings
+    max_uncertainty_m: 0.6
+    # Bearing accuracy of the array. Measured in simulation (stationary, < 11 m): sd 0.3-1.0 deg, so a
+    # 2 deg window. A neighbouring frog a few degrees off must fall outside it. RE-MEASURE ON HARDWARE
+    # (log /ugv_audio/doa_bearing at known spots) and set these to ~2x the measured sd.
+    ray_inlier_deg: 2.0
+    anchor_tol_deg: 6.0
+    max_range_m: 25.0
+    doa_sigma_deg: 1.0
+    bout_gap_s: 1.2               # silence that separates calling bouts (one bout = one frog)
+    nominal_range_m: 6.0          # assumed range before a second listening place exists
+    no_call_timeout_sec: 90.0
+    hunt_timeout_sec: 420.0
+    suppress_bearing_sec: 180.0
+    # --- viewpoint + camera
+    standoff_ground_m: 1.4
+    standoff_elevated_m: 2.2
+    elevated_threshold_m: 0.8     # estimate this far above the robot's ground = perched frog
+    vantage_angles: 16
+    vantage_extra_radii_m: [0.0, 0.5, 1.0, 2.0]
+    los_skip_end_m: 0.5
+    no_los_penalty: 10.0
+    extra_radius_penalty: 1.0
+    camera_settle_sec: 2.0
+    camera_scan_offsets: [0.0, 0.0, 0.15, 0.0, -0.15, 0.0, 0.0, 0.12, 0.0, -0.12]
+    image_topic: /pt_camera/image_raw
+    camera_info_topic: /pt_camera/camera_info
+    # --- mission
+    max_mission_sec: 3600.0
+    return_home: true
+    output_dir: /root/ugv_ws/coqui_surveys
+    nav_goal_timeout_sec: 180.0
+    plan_check_max: 6
+    global_frame: map
+    base_frame: base_footprint
+
+mic_array_localizer:
+  ros__parameters:
+    use_sim_time: true
+    ray_gate_deg: 30.0            # during a hunt, ignore bearings that point away from the estimate
+    gate_min_range_m: 1.5

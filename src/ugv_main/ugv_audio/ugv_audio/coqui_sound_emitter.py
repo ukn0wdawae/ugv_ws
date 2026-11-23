@@ -29,6 +29,7 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from ament_index_python.packages import get_package_share_directory
 from std_msgs.msg import Bool, Float32MultiArray, MultiArrayDimension, String
 from nav_msgs.msg import Odometry
@@ -44,11 +45,31 @@ MIC_POSITIONS_BODY = np.array([
     [0.095,  0.075, 0.000],  # 0: Front-Left (mic_fl_link)
     [0.095, -0.075, 0.000],  # 1: Front-Right (mic_fr_link)
     [-0.095, 0.075, 0.000],  # 2: Rear-Left (mic_rl_link)
-    [-0.095, -0.075, 0.000], # 3: Rear-Right (mic_rr_link)
+    [-0.095, -0.075, 0.000],  # 3: Rear-Right (mic_rr_link)
     [-0.065, 0.000, 0.040],  # 4: Top-Center (mic_top_link)
 ], dtype=np.float64)
 
 ARRAY_BASE_OFFSET_IN_FOOTPRINT = np.array([0.0, 0.0, 0.115], dtype=np.float64)
+
+# Survey mode: viewer-only simulation truth layer on /sim/coqui_truth_markers (latched complete scene)
+TRUTH_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+TRUTH_RGB = (1.0, 0.2, 0.9)   # magenta
+
+
+def make_marker(stamp, ns: str, mid: int, mtype: int, xyz, scale, rgba) -> Marker:
+    """A map-frame ADD marker, every field set with Python floats."""
+    m = Marker()
+    m.header.frame_id = 'map'
+    m.header.stamp = stamp
+    m.ns = ns
+    m.id = int(mid)
+    m.type = mtype
+    m.action = Marker.ADD
+    m.pose.position.x, m.pose.position.y, m.pose.position.z = (float(v) for v in xyz)
+    m.pose.orientation.w = 1.0
+    m.scale.x, m.scale.y, m.scale.z = (float(v) for v in scale)
+    m.color.r, m.color.g, m.color.b, m.color.a = (float(v) for v in rgba)
+    return m
 
 
 def quat_to_rot_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
@@ -112,25 +133,62 @@ class CoquiSoundEmitterNode(Node):
         self.declare_parameter('start_delay_sec', 4.5)
         self.declare_parameter('max_audible_range_m', 22.0)
         self.declare_parameter('noise_std', 0.008)
+        # mode 'legacy' : compact coqui worlds + coqui_hunter_node (robot locks/marks frogs, frog hints
+        #                 published on /coqui/active_frog_info).
+        # mode 'survey' : frogs from `truth_file`, calling in bouts on their own schedule. The emitter
+        #                 ignores the robot and publishes nothing but audio (no hints / answer key), plus,
+        #                 only with publish_truth_markers, a viewer-only truth layer on /sim/coqui_truth_markers.
+        self.declare_parameter('mode', 'legacy')
+        self.declare_parameter('truth_file', '')
+        self.declare_parameter('bout_calls_min', 10)
+        self.declare_parameter('bout_calls_max', 18)
+        self.declare_parameter('bout_gap_sec', 2.0)
+        self.declare_parameter('seed', 0)
+        self.declare_parameter('publish_truth_markers', False)
 
         self.env_name = self.get_parameter('env').value.strip().lower()
         self.call_period = float(self.get_parameter('call_period_sec').value)
         self.start_delay = float(self.get_parameter('start_delay_sec').value)
         self.max_range = float(self.get_parameter('max_audible_range_m').value)
         self.noise_std = float(self.get_parameter('noise_std').value)
+        self.mode = str(self.get_parameter('mode').value).strip().lower()
+        self.survey = self.mode == 'survey'
+        self.bout_calls = (int(self.get_parameter('bout_calls_min').value),
+                           int(self.get_parameter('bout_calls_max').value))
+        self.bout_gap = float(self.get_parameter('bout_gap_sec').value)
+        self.publish_truth_markers = bool(self.get_parameter('publish_truth_markers').value)
+        self.rng = np.random.default_rng(int(self.get_parameter('seed').value))
 
-        pkg_share = get_package_share_directory('ugv_audio')
-        cfg_path = os.path.join(pkg_share, 'config', 'coqui_environments.yaml')
-        with open(cfg_path, 'r') as f:
-            full_cfg = yaml.safe_load(f)
-
-        env_cfg = full_cfg['environments'].get(self.env_name, full_cfg['environments']['park'])
-        self.spawn_pose = env_cfg['spawn']
-        raw_frogs = env_cfg['frogs']
-        if isinstance(raw_frogs, dict):
-            self.frogs = list(raw_frogs.values())
+        if self.survey:
+            truth_file = str(self.get_parameter('truth_file').value)
+            if not truth_file:
+                truth_file = os.path.join(get_package_share_directory('ugv_audio'), 'config', 'sim_truth',
+                                          'forest_survey.yaml')
+            with open(truth_file, 'r') as f:
+                truth = yaml.safe_load(f)
+            self.spawn_pose = truth['spawn']
+            # body/call point is 5 cm above the model origin; habitat = short label for the truth layer
+            self.frogs = [{'name': fr['id'], 'pos': [fr['pos'][0], fr['pos'][1], fr['pos'][2] + 0.05],
+                           'foliage_attenuation': float(fr.get('attenuation', 1.0)),
+                           'habitat': str(fr.get('habitat', '')).split('(')[0].strip()[:30].rstrip()}
+                          for fr in truth['frogs']]
+            self.env_name = truth.get('world', 'survey')
+            self.bout_frog = None        # frog index of the current calling bout
+            self.bout_left = 0           # calls left in the bout
+            self.bout_gap_until = 0.0    # sim time until which nobody calls (between bouts)
         else:
-            self.frogs = list(raw_frogs)
+            pkg_share = get_package_share_directory('ugv_audio')
+            cfg_path = os.path.join(pkg_share, 'config', 'coqui_environments.yaml')
+            with open(cfg_path, 'r') as f:
+                full_cfg = yaml.safe_load(f)
+
+            env_cfg = full_cfg['environments'].get(self.env_name, full_cfg['environments']['park'])
+            self.spawn_pose = env_cfg['spawn']
+            raw_frogs = env_cfg['frogs']
+            if isinstance(raw_frogs, dict):
+                self.frogs = list(raw_frogs.values())
+            else:
+                self.frogs = list(raw_frogs)
 
         self.visited_frog_names = set()
         self.locked_frog_idx = None
@@ -152,31 +210,51 @@ class CoquiSoundEmitterNode(Node):
         # Subscriptions
         self.create_subscription(Odometry, '/ugv_gt_odom', self._gt_odom_cb, 10)
         self.create_subscription(Odometry, '/odom', self._odom_fallback_cb, 10)
-        self.create_subscription(Bool, '/coqui/lock_active_caller', self._lock_caller_cb, 10)
-        self.create_subscription(String, '/coqui_behavior/detection_report', self._report_cb, 10)
+        if not self.survey:
+            self.create_subscription(Bool, '/coqui/lock_active_caller', self._lock_caller_cb, 10)
+            self.create_subscription(String, '/coqui_behavior/detection_report', self._report_cb, 10)
 
         # Publishers
         self.audio_pub = self.create_publisher(
             Float32MultiArray, '/ugv_audio/mic_array/audio_raw', 10
         )
-        self.info_pub = self.create_publisher(
+        self.info_pub = None if self.survey else self.create_publisher(
             String, '/coqui/active_frog_info', 10
         )
-        self.marker_pub = self.create_publisher(
-            MarkerArray, '/coqui/emitter_markers', 10
-        )
+        # In survey mode the true frog positions are only drawn when explicitly asked for, on a
+        # clearly-named /sim/ topic, for a human watching RViz. Nothing on the robot subscribes to it.
+        self.marker_pub = None
+        if not self.survey:
+            self.marker_pub = self.create_publisher(MarkerArray, '/coqui/emitter_markers', 10)
+        elif self.publish_truth_markers:
+            self.marker_pub = self.create_publisher(MarkerArray, '/sim/coqui_truth_markers', TRUTH_QOS)
 
         self.start_time = self.get_clock().now()
         self.call_counter = 0
         self.timer = self.create_timer(self.call_period, self._emit_cycle)
 
-        frog_summary = ', '.join(
-            f"{f['name']} ({f.get('placement', 'open')} @ {f['pos']})" for f in self.frogs
-        )
-        self.get_logger().info(
-            f"Multi-Frog Coqui Sound Emitter started in env='{self.env_name}' "
-            f"with {len(self.frogs)} frogs on map: {frog_summary}"
-        )
+        # Survey truth layer: (index of the frog calling now or None, its call reaches the robot)
+        self.truth_state = (None, False)
+        self.truth_calls = 0    # calls of the calling frogs, drives the pulse of the truth ring
+        if self.survey and self.marker_pub is not None:
+            # 1 Hz: refreshes the ring pulse and reaches RViz displays subscribed as volatile
+            self.truth_timer = self.create_timer(1.0, self._publish_truth)
+            self._publish_truth()
+
+        if self.survey:
+            # do not print positions: the console is visible to whoever is testing the robot
+            truth = 'drawn only on /sim/coqui_truth_markers (RViz)' if self.marker_pub is not None else 'not published'
+            self.get_logger().info(
+                f"Coqui Sound Emitter (survey mode) started: {len(self.frogs)} frogs calling in bouts, "
+                f"audible to {self.max_range:.0f} m. True positions are {truth}.")
+        else:
+            frog_summary = ', '.join(
+                f"{f['name']} ({f.get('placement', 'open')} @ {f['pos']})" for f in self.frogs
+            )
+            self.get_logger().info(
+                f"Multi-Frog Coqui Sound Emitter started in env='{self.env_name}' "
+                f"with {len(self.frogs)} frogs on map: {frog_summary}"
+            )
 
     def _save_reference_wav(self):
         try:
@@ -261,6 +339,24 @@ class CoquiSoundEmitterNode(Node):
         self.current_caller_idx = best_i
         return best_i
 
+    def _survey_schedule(self, elapsed: float):
+        """Frogs call in bouts (a run of calls from one frog, then a short silence, then a random
+        frog), independent of the robot. Returns (frog index, frog is calling this cycle)."""
+        if self.bout_left <= 0:
+            if self.bout_frog is not None:
+                self.bout_gap_until = elapsed + self.bout_gap
+                self.bout_frog = None
+            if elapsed < self.bout_gap_until:
+                return 0, False
+            choices = list(range(len(self.frogs)))
+            if len(choices) > 1 and getattr(self, 'last_bout_frog', None) is not None:
+                choices.remove(self.last_bout_frog)
+            self.bout_frog = int(self.rng.choice(choices))
+            self.last_bout_frog = self.bout_frog
+            self.bout_left = int(self.rng.integers(self.bout_calls[0], self.bout_calls[1] + 1))
+        self.bout_left -= 1
+        return self.bout_frog, True
+
     def _emit_cycle(self):
         elapsed = (self.get_clock().now() - self.start_time).nanoseconds * 1e-9
 
@@ -270,7 +366,14 @@ class CoquiSoundEmitterNode(Node):
         )
         mic_world_pts = array_origin_world + (MIC_POSITIONS_BODY @ self.robot_rot_world.T)
 
-        caller_idx = self._select_active_calling_frog(array_origin_world)
+        if self.survey:
+            if elapsed < self.start_delay:
+                caller_idx, in_bout = 0, False
+            else:
+                caller_idx, in_bout = self._survey_schedule(elapsed)
+        else:
+            caller_idx = self._select_active_calling_frog(array_origin_world)
+            in_bout = True
         active = self.frogs[caller_idx]
         frog_pos = np.array(active['pos'], dtype=np.float64)
 
@@ -279,7 +382,8 @@ class CoquiSoundEmitterNode(Node):
 
         # Synthesize source waveform if past start_delay, not in return-home pause, and in range
         is_calling = (
-            (elapsed >= self.start_delay)
+            in_bout
+            and (elapsed >= self.start_delay)
             and (elapsed >= self.pause_until_sec)
             and (center_dist <= self.max_range)
         )
@@ -310,6 +414,11 @@ class CoquiSoundEmitterNode(Node):
         msg.layout.data_offset = 0
         msg.data = multi_ch.astype(np.float32).ravel().tolist()
         self.audio_pub.publish(msg)
+
+        if self.survey:
+            if self.marker_pub is not None:
+                self._update_truth(caller_idx if in_bout else None, is_calling)
+            return
 
         # Publish metadata for RViz / diagnostics
         info = {
@@ -406,6 +515,49 @@ class CoquiSoundEmitterNode(Node):
                 ma.markers.append(ring)
 
         self.marker_pub.publish(ma)
+
+    def _update_truth(self, caller, audible: bool):
+        """Survey mode, once per call cycle: `caller` = index of the frog calling (in its bout) or None,
+        `audible` = its call reaches the robot (within max_audible_range_m). Re-publishes the truth scene
+        when either changes; the 1 Hz timer re-publishes it in between."""
+        if caller is not None:
+            self.truth_calls += 1
+        state = (caller, bool(audible))
+        if state != self.truth_state:
+            self.truth_state = state
+            self._publish_truth()
+
+    def _publish_truth(self):
+        self.marker_pub.publish(self._truth_scene(*self.truth_state))
+
+    def _truth_scene(self, caller, audible: bool = True) -> MarkerArray:
+        """Survey mode, viewer-only simulation truth as one complete scene (DELETEALL first): every frog as a
+        magenta sphere + label, and a pulsing ring around the frog calling now (`caller` index, None: nobody)."""
+        now = self.get_clock().now().to_msg()
+        clear = Marker()
+        clear.header.frame_id = 'map'
+        clear.header.stamp = now
+        clear.action = Marker.DELETEALL
+        ma = MarkerArray(markers=[clear])
+        for i, fr in enumerate(self.frogs):
+            x, y, z = fr['pos']    # call point, 5 cm above the frog model origin
+            calling = i == caller
+            ma.markers.append(make_marker(now, 'truth_frogs', i, Marker.SPHERE, (x, y, z), (0.22, 0.22, 0.22),
+                                          TRUTH_RGB + (0.45,)))
+            text = fr['name'] + ' (truth)'
+            if calling:
+                text += ' CALLING' if audible else ' CALLING (out of earshot)'
+            if fr['habitat']:
+                text += '\n' + fr['habitat']
+            label = make_marker(now, 'truth_labels', i, Marker.TEXT_VIEW_FACING, (x, y, z + 0.45),
+                                (0.22, 0.22, 0.22), (TRUTH_RGB + (1.0,)) if calling else (1.0, 1.0, 1.0, 0.9))
+            label.text = text
+            ma.markers.append(label)
+        if caller is not None:
+            d = 0.8 + 0.4 * (self.truth_calls % 4)    # diameter pulses 0.8 .. 2.0 m with the calls
+            ma.markers.append(make_marker(now, 'truth_call', 0, Marker.CYLINDER, self.frogs[caller]['pos'],
+                                          (d, d, 0.02), TRUTH_RGB + (0.25,)))
+        return ma
 
 
 def main(args=None):

@@ -36,7 +36,10 @@
     RGBD/AngularSpeedUpdate: "0.1"
 
     # Scan-match neighbor links on 3D LiDAR point cloud (/scan_cloud)
-    RGBD/NeighborLinkRefining: "true"
+    # Gazebo /odom is exact (diff_drive odometry_source=world). Re-registering every odom step with
+    # ICP on forest foliage only adds error: map->odom jumped 10-80 cm per update and tilted the
+    # graph (2.4 m z offset). Trust odom between nodes; ICP is still used for proximity/loop links.
+    RGBD/NeighborLinkRefining: "false"
     RGBD/ProximityBySpace: "true"
     RGBD/ProximityMaxGraphDepth: "0"
     RGBD/ProximityPathMaxNeighbors: "1"
@@ -44,11 +47,17 @@
     Reg/Strategy: "1"
     Icp/Strategy: "1"
     Icp/VoxelSize: "0.05"
-    Icp/MaxCorrespondenceDistance: "0.30"
+    # Strict ICP: point-to-plane, >=20% overlap, and reject corrections larger than 0.3 m / 0.3 rad
+    # (was point-to-point accepting 1% overlap, which matched grass/foliage to anything).
+    Icp/MaxCorrespondenceDistance: "0.15"
     Icp/Iterations: "30"
     Icp/Epsilon: "0.001"
-    Icp/CorrespondenceRatio: "0.01"
-    Icp/PointToPlane: "false"
+    Icp/CorrespondenceRatio: "0.2"
+    Icp/PointToPlane: "true"
+    Icp/PointToPlaneK: "20"
+    Icp/PointToPlaneRadius: "0"
+    Icp/MaxTranslation: "0.3"
+    Icp/MaxRotation: "0.3"
 
     # Wood / grass walls false-match easily. slam_toolbox has do_loop_closing: false.
     # Keep proximity (lidar) loops; make visual loops strict.

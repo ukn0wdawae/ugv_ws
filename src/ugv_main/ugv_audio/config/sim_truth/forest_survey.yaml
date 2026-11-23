@@ -1,0 +1,38 @@
+# SIMULATION GROUND TRUTH ("answer key") for the big-forest Coqui survey.
+#
+# Read ONLY by:
+#   - ugv_audio/coqui_sound_emitter (mode: survey)   -> to synthesise the calls at these positions
+#   - ugv_gazebo/scripts/coqui/make_forest_coqui_survey_world.py -> to place the frog models
+#   - ugv_coqui_behavior/tools/eval_survey.py         -> to grade a finished survey
+# The robot side (mic_array_localizer, coqui_survey_node, Nav2) never reads this file and never
+# receives any of it over ROS. `habitat` is a human description for the grader only.
+#
+# pos = frog model origin in the Gazebo world (= map/odom frame in sim). The call is emitted
+# 5 cm above it (frog body). z values are the terrain height at (x, y) (+1.5 m for the tree frog).
+world: forest_coqui_survey
+spawn: [48.0, 2.1, 2.75, -3.13]   # x, y, z, yaw
+frogs:
+  - id: coqui_01
+    pos: [37.5, -9.5, 2.633]
+    habitat: open glade
+    attenuation: 1.0
+  - id: coqui_02
+    pos: [39.35, 8.5, 2.730]
+    habitat: behind a pine trunk (trunk between frog and the path)
+    attenuation: 0.9
+  - id: coqui_03
+    pos: [40.5, -2.5, 2.988]
+    habitat: about 1 m inside a dense bush (not traversable)
+    attenuation: 0.78
+  - id: coqui_04
+    pos: [35.5, -2.6, 3.222]
+    habitat: inside a tall-grass patch
+    attenuation: 0.85
+  - id: coqui_05
+    pos: [47.4, -9.2, 4.279]
+    habitat: perched 1.5 m up a pine trunk
+    attenuation: 0.94
+  - id: coqui_06
+    pos: [24.0, -6.0, 3.317]
+    habitat: open ground 25 m west of start (out of earshot from the start)
+    attenuation: 1.0
