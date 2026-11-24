@@ -111,8 +111,11 @@ def test_robot_sdf_physics_odometry_and_lidar_realism(ws_root):
     pub_tf = root.find('.//publish_odom_tf')
     assert pub_tf is not None and pub_tf.text.strip().lower() == 'false', (
         'diff_drive must set publish_odom_tf=false so EKF owns odom->base_footprint')
-    odom_topic = root.find('.//odometry_topic')
-    assert odom_topic is not None and 'wheel/odom' in odom_topic.text.strip()
+    diff_plugin = root.find(".//plugin[@filename='libgazebo_ros_diff_drive.so']")
+    assert diff_plugin is not None
+    remaps = [r.text.strip() for r in diff_plugin.findall('.//ros/remapping') if r.text]
+    assert any('odom:=wheel/odom' in r for r in remaps), (
+        f'ROS 2 libgazebo_ros_diff_drive ignores <odometry_topic>; must remap odom:=wheel/odom in <ros>, got {remaps}')
     # Lidar vertical FOV: at least 6 of 16 beams below horizon (min_angle <= -15 deg)
     lidar_vert = root.find(".//sensor[@name='lidar_3d']//vertical")
     samples = int(lidar_vert.find('samples').text)
