@@ -1,6 +1,9 @@
 # Profile: big forest (forest.world / forest_coqui_survey.world), pine trunks, low bushes, tall grass,
 # rolling terrain. Merged on top of survey_base.yaml (`survey:`) and nav2_survey_base.yaml (`nav2:`).
 # Only put values here that differ from the base because of this environment.
+# Trailhead initial pose (x, y, z, yaw) in the operator's map frame so wheel-encoder odom (starting at 0,0)
+# aligns with survey_area without reading any simulation ground truth.
+initial_pose: [48.0, 2.1, 2.67, -3.13]
 survey:
   coqui_survey:
     ros__parameters:

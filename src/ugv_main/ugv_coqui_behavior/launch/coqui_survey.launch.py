@@ -222,9 +222,18 @@ def setup(context):
             ),
         ]
         if loc == 'ekf':
+            ip = profile.get('initial_pose', [0.0, 0.0, 0.0, 0.0])
+            ix = lc('init_x') or lc('x') or str(ip[0])
+            iy = lc('init_y') or lc('y') or str(ip[1])
+            iz = lc('init_z') or lc('z') or str(ip[2])
+            iyaw = lc('init_yaw') or lc('yaw') or str(ip[3])
             acts.append(Node(
                 package='tf2_ros', executable='static_transform_publisher', name='map_to_odom_identity',
-                arguments=['--frame-id', 'map', '--child-frame-id', 'odom'],
+                arguments=[
+                    '--x', ix, '--y', iy, '--z', iz,
+                    '--yaw', iyaw, '--pitch', '0', '--roll', '0',
+                    '--frame-id', 'map', '--child-frame-id', 'odom',
+                ],
                 parameters=[{'use_sim_time': use_sim_time_bool}],
             ))
         else:
@@ -322,5 +331,9 @@ def generate_launch_description():
         DeclareLaunchArgument('y', default_value=''),
         DeclareLaunchArgument('z', default_value=''),
         DeclareLaunchArgument('yaw', default_value=''),
+        DeclareLaunchArgument('init_x', default_value='', description='override initial map->odom trailhead x'),
+        DeclareLaunchArgument('init_y', default_value=''),
+        DeclareLaunchArgument('init_z', default_value=''),
+        DeclareLaunchArgument('init_yaw', default_value=''),
         OpaqueFunction(function=setup),
     ])

@@ -405,6 +405,6 @@ collision_monitor:
     obstacles_cloud:
       type: pointcloud
       topic: /terrain_traversability/obstacles
-      min_height: -2.0
-      max_height: 2.0
+      min_height: -15.0
+      max_height: 25.0
       enabled: true

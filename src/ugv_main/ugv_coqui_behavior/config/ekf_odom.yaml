@@ -19,25 +19,26 @@ ekf_filter_node:
     base_link_frame: base_footprint
     world_frame: odom
 
-    # Wheel encoder odometry (libgazebo_ros_diff_drive odometry_source=0): fuse vx and vyaw twist
+    # Wheel encoder odometry (libgazebo_ros_diff_drive odometry_source=0): fuse longitudinal vx only
+    # (6-wheel skid-steer wheel-encoder yaw rate has heavy lateral tire scrub error; gyro handles vyaw)
     odom0: /wheel/odom
     odom0_config: [false, false, false,
                    false, false, false,
                    true,  false, false,
-                   false, false, true,
+                   false, false, false,
                    false, false, false]
     odom0_differential: false
     odom0_relative: false
     odom0_queue_size: 10
 
-    # Madgwick-filtered IMU from noisy gyro + accel (/imu/raw -> /imu): fuse yaw rate (and differential yaw)
+    # Madgwick-filtered IMU from noisy gyro + accel (/imu/raw -> /imu): fuse gyro yaw rate
     imu0: /imu
     imu0_config: [false, false, false,
-                  false, false, true,
+                  false, false, false,
                   false, false, false,
                   false, false, true,
                   false, false, false]
-    imu0_differential: true
+    imu0_differential: false
     imu0_relative: false
     imu0_remove_gravitational_acceleration: true
     imu0_queue_size: 20

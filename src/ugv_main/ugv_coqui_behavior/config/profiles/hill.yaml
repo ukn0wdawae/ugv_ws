@@ -1,6 +1,9 @@
 # Profile: mountain switchback hill (hill.world / hill_coqui_survey.world), 11 m vertical climb
 # from the lower east trailhead (z ~ 2.4 m) up the west hairpin (10-22 deg slopes) to the upper
 # ridge plateau (z ~ 13.0 m). Merged on top of survey_base.yaml (`survey:`) and nav2_survey_base.yaml (`nav2:`).
+# Trailhead initial pose (x, y, z, yaw) in the operator's map frame so wheel-encoder odom (starting at 0,0)
+# aligns with survey_area without reading any simulation ground truth.
+initial_pose: [43.0, -13.0, 2.45, -3.0]
 survey:
   coqui_survey:
     ros__parameters:
