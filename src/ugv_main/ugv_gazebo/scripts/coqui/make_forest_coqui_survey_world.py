@@ -99,7 +99,7 @@ def main():
     frogs = []
     for fr in truth['frogs']:
         x, y, z = fr['pos']
-        yaw = math.atan2(truth['spawn'][1] - y, truth['spawn'][0] - x)   # face roughly toward the start
+        yaw = float(fr['yaw']) if 'yaw' in fr else math.atan2(truth['spawn'][1] - y, truth['spawn'][0] - x)
         frogs.append(f"""
     <include>
       <name>{fr['id']}</name>

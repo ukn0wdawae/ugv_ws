@@ -25,7 +25,7 @@ import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction, Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -196,7 +196,7 @@ def setup(context):
             PythonLaunchDescriptionSource(os.path.join(me, 'launch', 'coqui_survey_sim.launch.py')),
             launch_arguments={'profile': lc('profile'), 'gui': lc('gui'), 'follow': lc('follow'),
                               'show_truth': lc('show_truth'), 'seed': lc('seed'),
-                              'randomize': lc('randomize'),
+                              'randomize': lc('randomize'), 'truth_out': lc('truth_out'),
                               'x': lc('x'), 'y': lc('y'), 'z': lc('z'), 'yaw': lc('yaw')}.items()))
 
     loc = lc('localization').strip().lower()
@@ -288,7 +288,8 @@ def setup(context):
     if lc('rviz') == 'true':
         acts.append(Node(package='rviz2', executable='rviz2', name='coqui_survey_rviz', output='log',
                          arguments=['-d', os.path.join(me, 'rviz', 'coqui_survey.rviz')],
-                         parameters=[{'use_sim_time': use_sim_time_bool}]))
+                         parameters=[{'use_sim_time': use_sim_time_bool}],
+                         sigterm_timeout='1', sigkill_timeout='2', on_exit=Shutdown()))
     return acts
 
 
@@ -324,7 +325,9 @@ def generate_launch_description():
                               description='true/false: survey_viz_aids (default: on when rviz is on)'),
         DeclareLaunchArgument('seed', default_value='0'),
         DeclareLaunchArgument('randomize', default_value='false',
-                              description='sim:=true only: randomize frog positions and spawn pose from seed'),
+                              description='sim:=true only: randomize frog positions from seed'),
+        DeclareLaunchArgument('truth_out', default_value='',
+                              description='sim:=true only: optional path to save active truth YAML'),
         DeclareLaunchArgument('mission', default_value='true',
                               description='false: everything but the survey mission (drive with teleop / Nav2 goals)'),
         DeclareLaunchArgument('x', default_value='', description='override spawn pose when sim:=true'),

@@ -29,7 +29,8 @@ frogs:
     habitat: inside a tall-grass patch
     attenuation: 0.85
   - id: coqui_05
-    pos: [47.4, -9.2, 4.279]
+    pos: [47.261, -11.475, 4.114]
+    yaw: 1.571
     habitat: perched 1.5 m up a pine trunk
     attenuation: 0.94
   - id: coqui_06

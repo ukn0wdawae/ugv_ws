@@ -115,6 +115,7 @@ class TraversabilityNode(Node):
         self.odom_is_3d = False
         self.tf_z0 = None
         self.last_pose = None  # (stamp_msg, T_fixed_robot_compensated, T_fixed_robot_tf)
+        self._t_start_wall = time.monotonic()
         self.stats = {'clouds': 0, 'points': 0, 'proc_ms': 0.0, 'pub_ms': 0.0, 'pubs': 0, 'tf_drop': 0}
         self.create_timer(0.02, self.retry_pending)
         self.frames_seen = {}
@@ -420,6 +421,8 @@ class TraversabilityNode(Node):
     def report(self):
         s = self.stats
         if s['clouds'] == 0:
+            if time.monotonic() - self._t_start_wall < 8.0:
+                return
             self.get_logger().warn('no point clouds processed yet (check cloud_topics / TF)',
                                    throttle_duration_sec=30.0)
             return
@@ -435,12 +438,16 @@ class TraversabilityNode(Node):
 
 
 def main(args=None):
+    from rclpy._rclpy_pybind11 import RCLError
     rclpy.init(args=args)
     node = TraversabilityNode()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass  # Ctrl-C / launch shutdown: exit cleanly (code 0)
+    except RCLError:
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
         if rclpy.ok():

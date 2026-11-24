@@ -22,10 +22,15 @@ if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
     echo "Recreate it with:  docker rm -f $NAME && GPU=$GPU ./docker/shell.sh" >&2
     exit 1
   fi
+  EXISTING_IPC="$(docker inspect -f '{{.HostConfig.IpcMode}}' "$NAME" 2>/dev/null || true)"
+  if [ "$EXISTING_IPC" = "host" ]; then
+    echo "Note: '$NAME' uses legacy host IPC mode. Recreate once with 'docker rm -f $NAME && ./docker/shell.sh' for --init + isolated /dev/shm." >&2
+  fi
   docker start "$NAME" >/dev/null 2>&1 || true
   exec docker exec -it \
     -e DISPLAY="${DISPLAY:-:0}" \
     -e UGV_MODEL="${UGV_MODEL:-ugv_pro_audio}" \
+    -e ALSOFT_DRIVERS="${ALSOFT_DRIVERS:-null}" \
     "$NAME" bash
 fi
 
@@ -47,14 +52,16 @@ fi
 
 exec docker run -it \
   --name "$NAME" \
+  --init \
   --label "ugv.gpu=$GPU" \
   --network host \
-  --ipc host \
+  --shm-size=2g \
   "${GPU_ARGS[@]}" \
   -e DISPLAY="${DISPLAY:-:0}" \
   -e XDG_RUNTIME_DIR=/tmp/runtime-root \
   -e UGV_MODEL="${UGV_MODEL:-ugv_pro_audio}" \
   -e GAZEBO_MODEL_DATABASE_URI="" \
+  -e ALSOFT_DRIVERS=null \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v /dev/input:/dev/input \
   --device-cgroup-rule='c 13:* rmw' \

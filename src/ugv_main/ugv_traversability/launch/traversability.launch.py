@@ -34,6 +34,7 @@ def generate_launch_description():
             package='rviz2', executable='rviz2', name='traversability_rviz',
             arguments=['-d', os.path.join(share, 'rviz', 'traversability.rviz')],
             parameters=[{'use_sim_time': use_sim_time}],
+            sigterm_timeout='1', sigkill_timeout='2',
             condition=IfCondition(LaunchConfiguration('rviz')),
         ),
     ])

@@ -525,9 +525,11 @@ class CoquiSurveyNode(Node):
     def set_state(self, s, **info):
         self.state = s
         info.update(state=s, t=round(self.now(), 1), frogs_found=len(self.store.frogs))
+        self.store.log_event('state', **info)
+        if not rclpy.ok():
+            return
         self.state_pub.publish(String(data=json.dumps(info)))
         self.get_logger().info(f'[{s}] ' + ', '.join(f'{k}={v}' for k, v in info.items() if k not in ('state', 't')))
-        self.store.log_event('state', **info)
         hud = dict(info, listen_s=self.cfg['station_listen_sec']) if s == 'LISTEN' else dict(info)
         self.publish_markers(hud_state=s, hud_info=hud, hud_since=self.now())   # RViz status HUD
 
@@ -554,6 +556,7 @@ class CoquiSurveyNode(Node):
         """Path length Nav2's planner finds from the robot to (x, y), or None if unreachable."""
         g = ComputePathToPose.Goal()
         g.goal = self._goal_pose(x, y, 0.0)
+        g.planner_id = 'GridBased'
         g.use_start = False
         h = self._wait(self.planner.send_goal_async(g), 10.0)
         if h is None or not h.accepted:
@@ -989,7 +992,6 @@ class CoquiSurveyNode(Node):
         except Exception as e:  # keep the record even on a bug (ignore rclpy teardown on Ctrl-C)
             self.mission_active = False
             if not rclpy.ok():
-                self.get_logger().info('mission stopped during ROS shutdown')
                 return
             self.get_logger().error(f'mission crashed: {e!r}')
             self.store.set_mission(result=f'crashed: {e!r}')
@@ -1542,6 +1544,8 @@ class CoquiSurveyNode(Node):
         goal (x, y, yaw, label), estimate (pos, uncertainty_m), rays (ray_segments()), anchor (origin, dir),
         aim (from xyz, to xyz), hud_state / hud_info / hud_since (from set_state).
         Never raises and never waits: a visualization bug must not stop or stall the mission."""
+        if not rclpy.ok():
+            return
         try:
             with self.viz_lock:
                 unknown = set(changes) - set(self.viz)
@@ -1551,7 +1555,8 @@ class CoquiSurveyNode(Node):
                 ma = build_scene(self._scene_data(), self.get_clock().now().to_msg(), self.gf)
                 self.marker_pub.publish(ma)
         except Exception as e:  # visualization must never disturb the mission
-            self.get_logger().warn(f'survey markers not published: {e!r}', throttle_duration_sec=10.0)
+            if rclpy.ok():
+                self.get_logger().warn(f'survey markers not published: {e!r}', throttle_duration_sec=10.0)
 
     def _scene_data(self):
         """Plain-data snapshot of the scene for build_scene() (called with viz_lock held)."""
@@ -1586,12 +1591,15 @@ class CoquiSurveyNode(Node):
 
     def show_bearing(self, origin, direction, use):
         """RViz: one heard bearing on /coqui_survey/hearing (see hearing_marker); use 'new', 'hunt' or 'ignored'."""
+        if not rclpy.ok():
+            return
         try:
             m = hearing_marker(origin, direction, use, next(self.hearing_ids) % 50,
                                self.get_clock().now().to_msg(), self.gf)
             self.hearing_pub.publish(MarkerArray(markers=[m]))
         except Exception as e:  # visualization must never disturb the mission
-            self.get_logger().warn(f'hearing marker not published: {e!r}', throttle_duration_sec=10.0)
+            if rclpy.ok():
+                self.get_logger().warn(f'hearing marker not published: {e!r}', throttle_duration_sec=10.0)
 
 
 # ------------------------------------------------------------------------------------------------ RViz
@@ -1723,6 +1731,7 @@ def hearing_marker(origin, direction, use, idx, stamp, gf, length=4.0):
 
 
 def main(args=None):
+    from rclpy._rclpy_pybind11 import RCLError
     rclpy.init(args=args)
     node = CoquiSurveyNode()
     ex = MultiThreadedExecutor(num_threads=4)
@@ -1733,6 +1742,9 @@ def main(args=None):
         ex.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RCLError:
+        if rclpy.ok():
+            raise
     finally:
         node.store.log_event('shutdown')
         node.destroy_node()

@@ -1048,15 +1048,21 @@ class CoquiHunterBehaviorNode(Node):
 
 
 def main(args=None):
+    from rclpy._rclpy_pybind11 import RCLError
+    from rclpy.executors import ExternalShutdownException
     rclpy.init(args=args)
     node = CoquiHunterBehaviorNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RCLError:
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

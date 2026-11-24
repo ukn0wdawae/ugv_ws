@@ -29,8 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV QT_X11_NO_MITSHM=1
-# Avoid ~30s stall looking up models online
+# Avoid ~30s stall looking up models online and suppress ALSA/OpenAL soundcard errors in container
 ENV GAZEBO_MODEL_DATABASE_URI=""
+ENV ALSOFT_DRIVERS=null
 ENV UGV_MODEL=ugv_rover
 
 RUN mkdir -p /tmp/runtime-root && chmod 0700 /tmp/runtime-root \

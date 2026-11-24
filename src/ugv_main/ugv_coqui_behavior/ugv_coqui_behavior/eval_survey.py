@@ -23,6 +23,26 @@ def default_truth(profile='forest'):
         return ''
 
 
+def resolve_truth(survey_path, profile='forest', explicit_truth=''):
+    if explicit_truth:
+        return explicit_truth
+    # 1) Trial runner / saved run-local truth_used.yaml next to survey.yaml
+    if survey_path:
+        local_truth = os.path.join(os.path.dirname(os.path.abspath(survey_path)), 'truth_used.yaml')
+        if os.path.isfile(local_truth):
+            return local_truth
+    # 2) Active/most-recent Terminal 1 randomized truth in /tmp if created before/during this survey run
+    domain = os.environ.get('ROS_DOMAIN_ID', '0').strip() or '0'
+    session_truth = f'/tmp/coqui_latest_truth_{profile}_d{domain}.yaml'
+    if os.path.isfile(session_truth) and survey_path and os.path.isfile(survey_path):
+        try:
+            if os.path.getmtime(survey_path) + 2.0 >= os.path.getmtime(session_truth):
+                return session_truth
+        except OSError:
+            pass
+    return default_truth(profile)
+
+
 def grade(survey, truth, match_m):
     found = survey.get('frogs', [])
     true = truth['frogs']
@@ -78,9 +98,10 @@ def main(argv=None):
     ap.add_argument('--match', type=float, default=2.0)
     ap.add_argument('--json', default='')
     a = ap.parse_args(argv)
-    truth_path = a.truth or default_truth(a.profile)
+    truth_path = resolve_truth(a.survey, a.profile, a.truth)
     if not truth_path:
         sys.exit('pass --truth')
+    print(f'truth file: {truth_path}')
     res = grade(yaml.safe_load(open(a.survey)), yaml.safe_load(open(truth_path)), a.match)
     print(f"recorded {res['frogs_recorded']}, true {res['frogs_true']}, matched {res['matched']} "
           f"(recall {res['recall']}, precision {res['precision']}), mean xy error {res['mean_err_xy_m']} m, "

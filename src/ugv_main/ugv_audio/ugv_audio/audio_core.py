@@ -2,7 +2,9 @@
 and seeded scenario randomization (ROS-free so offline tests can exercise all acoustic physics).
 """
 import copy
+import functools
 import math
+import os
 import numpy as np
 
 
@@ -219,54 +221,343 @@ def propagate_sources_to_array(sources, array_origin_world, robot_rot_world,
     return multi_ch
 
 
+def _world_scenes_path() -> str:
+    """Locate precomputed 3D terrain & vegetation geometry (`world_scenes.npz`) in source or install tree."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.abspath(os.path.join(here, '..', 'config', 'sim_truth', 'world_scenes.npz')),
+    ]
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        candidates.append(os.path.join(
+            get_package_share_directory('ugv_audio'), 'config', 'sim_truth', 'world_scenes.npz'))
+    except Exception:
+        pass
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return ''
+
+
+@functools.lru_cache(maxsize=1)
+def load_world_scenes() -> dict:
+    """Load cached 3D terrain elevation grids and real bush/tree/grass catalogs."""
+    p = _world_scenes_path()
+    if not p:
+        return {}
+    with np.load(p, allow_pickle=False) as zf:
+        return {k: zf[k] for k in zf.files}
+
+
+def _scene_prefix(world_name: str) -> str:
+    w = (world_name or '').lower()
+    if 'forest' in w:
+        return 'forest'
+    if 'hill' in w:
+        return 'hill'
+    return ''
+
+
+def ground_elevation_z(world_name: str, x: float, y: float, fallback_z: float = 0.0) -> float:
+    """Return exact bilinearly interpolated terrain mesh elevation `z(x, y)` for `forest` or `hill`."""
+    scenes = load_world_scenes()
+    pref = _scene_prefix(world_name)
+    if not pref or f'{pref}_grid_z' not in scenes:
+        return float(fallback_z)
+    grid = scenes[f'{pref}_grid_z']
+    x0, y0, dx, dy = (float(v) for v in scenes[f'{pref}_grid_meta'])
+    ny, nx = grid.shape
+    fx = float(np.clip((float(x) - x0) / dx, 0.0, nx - 1.0001))
+    fy = float(np.clip((float(y) - y0) / dy, 0.0, ny - 1.0001))
+    ix, iy = int(math.floor(fx)), int(math.floor(fy))
+    tx, ty = fx - ix, fy - iy
+    z00, z10 = float(grid[iy, ix]), float(grid[iy, ix + 1])
+    z01, z11 = float(grid[iy + 1, ix]), float(grid[iy + 1, ix + 1])
+    return (1.0 - ty) * ((1.0 - tx) * z00 + tx * z10) + ty * ((1.0 - tx) * z01 + tx * z11)
+
+
+def _is_clear_of_obstacles(x: float, y: float, obstacles: np.ndarray, extra_pad: float = 0.45) -> bool:
+    if obstacles is None or len(obstacles) == 0:
+        return True
+    d = np.hypot(obstacles[:, 0] - x, obstacles[:, 1] - y)
+    return bool(np.all(d >= obstacles[:, 2] + extra_pad))
+
+
+def _respects_bounds_and_sep(x: float, y: float, bounds, placed_xy, min_sep: float,
+                             spawn_xy=None, min_spawn_sep: float = 0.0) -> bool:
+    if bounds is not None:
+        xmin, xmax, ymin, ymax = bounds
+        if not (xmin <= x <= xmax and ymin <= y <= ymax):
+            return False
+    if spawn_xy is not None and min_spawn_sep > 0.0:
+        if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) < min_spawn_sep:
+            return False
+    return all(math.hypot(x - px, y - py) >= min_sep for px, py in placed_xy)
+
+
+def _randomize_with_scene(out: dict, pref: str, scenes: dict, rng: np.random.Generator,
+                          bounds, min_frog_sep_m: float, spawn_xy, min_spawn_sep_m: float) -> bool:
+    """Place frogs across real 3D bushes, tree tops, tree bark perches, tall grass, and open glades."""
+    frogs = out.get('frogs', [])
+    if not frogs:
+        return True
+    world_name = out.get('world', pref)
+    bushes = scenes.get(f'{pref}_bushes', np.zeros((0, 4)))
+    tree_tops = scenes.get(f'{pref}_tree_tops', np.zeros((0, 6)))
+    tree_perches = scenes.get(f'{pref}_tree_perches', np.zeros((0, 5)))
+    grass = scenes.get(f'{pref}_grass', np.zeros((0, 3)))
+    obstacles = scenes.get(f'{pref}_obstacles', np.zeros((0, 4)))
+
+    n = len(frogs)
+    # Build habitat schedule ensuring every 6-frog forest run has:
+    #   - 2 frogs inside distinct dense bushes
+    #   - 2 elevated tree frogs (at least 1 literally on top of a tree crown/trunk + 1 perched up a pine trunk)
+    #   - 1 frog inside tall grass
+    #   - 1 frog on open forest floor / behind a pine trunk
+    if pref == 'forest':
+        base_roles = ['bush', 'bush', 'tree_top', 'tree_perch', 'grass', 'open_or_behind']
+        if rng.random() < 0.35 and len(tree_tops) >= 2:
+            base_roles[3] = 'tree_top'
+    else:
+        base_roles = ['bush', 'bush', 'tree_perch', 'grass', 'open_or_behind', 'open_or_behind']
+    roles = [base_roles[i % len(base_roles)] for i in range(n)]
+    # Shuffle which frog ID (`coqui_01..06`) gets which habitat role so IDs are not predictable
+    role_order = rng.permutation(n)
+
+    placed_xy = []
+    used_groups = set()
+    assignments = [None] * n
+
+    # Place constrained feature-bound roles (`tree_top`, `bush`, `tree_perch`, `grass`) before open ground
+    priority = {'tree_top': 0, 'bush': 1, 'tree_perch': 2, 'grass': 3, 'open_or_behind': 4}
+    slot_indices = sorted(range(n), key=lambda idx: priority[roles[idx]])
+
+    for slot_idx in slot_indices:
+        role = roles[slot_idx]
+        chosen = None
+
+        if role == 'tree_top' and len(tree_tops) > 0:
+            perm = rng.permutation(len(tree_tops))
+            # Balance crown-top (subtype 0) and fallen-trunk-top (subtype 1) across seeds
+            prefer_sub = 0.0 if rng.random() < 0.65 else 1.0
+            ordered = sorted(perm.tolist(), key=lambda i: 0 if tree_tops[i, 5] == prefer_sub else 1)
+            for idx in ordered:
+                cx, cy, cz, cyaw, grp, subtype = (float(v) for v in tree_tops[idx])
+                if int(grp) in used_groups:
+                    continue
+                if not _respects_bounds_and_sep(cx, cy, bounds, placed_xy, min_frog_sep_m, spawn_xy, min_spawn_sep_m):
+                    continue
+                used_groups.add(int(grp))
+                g_z = ground_elevation_z(world_name, cx, cy, cz - 1.6)
+                dh = max(1.0, cz - g_z)
+                hab = (f'on top of young pine tree crown ({dh:.1f} m high)'
+                       if subtype < 0.5 else f'on top of fallen pine tree trunk ({dh:.1f} m high)')
+                chosen = {
+                    'pos': [round(cx, 3), round(cy, 3), round(cz, 3)],
+                    'yaw': round(cyaw, 3),
+                    'habitat': hab,
+                    'attenuation': round(float(rng.uniform(0.90, 0.97)), 3),
+                }
+                break
+            if chosen is None:
+                role = 'tree_perch'
+
+        if role == 'bush' and len(bushes) > 0:
+            perm = rng.permutation(len(bushes))
+            for idx in perm:
+                bx, by, _bz, grp = (float(v) for v in bushes[idx])
+                if int(grp) in used_groups:
+                    continue
+                jx = bx + float(rng.uniform(-0.18, 0.18))
+                jy = by + float(rng.uniform(-0.18, 0.18))
+                if not _respects_bounds_and_sep(jx, jy, bounds, placed_xy, min_frog_sep_m, spawn_xy, min_spawn_sep_m):
+                    continue
+                used_groups.add(int(grp))
+                jz = ground_elevation_z(world_name, jx, jy, _bz)
+                chosen = {
+                    'pos': [round(jx, 3), round(jy, 3), round(jz, 3)],
+                    'habitat': 'inside a dense bush (not traversable)',
+                    'attenuation': round(float(rng.uniform(0.75, 0.83)), 3),
+                }
+                break
+
+        if role == 'tree_perch' and len(tree_perches) > 0:
+            perm = rng.permutation(len(tree_perches))
+            for idx in perm:
+                tx, ty, tz, tyaw, grp = (float(v) for v in tree_perches[idx])
+                if (1000 + int(grp)) in used_groups:
+                    continue
+                if not _respects_bounds_and_sep(tx, ty, bounds, placed_xy, min_frog_sep_m, spawn_xy, min_spawn_sep_m):
+                    continue
+                used_groups.add(1000 + int(grp))
+                g_z = ground_elevation_z(world_name, tx, ty, tz - 1.6)
+                eff_z = max(tz, g_z + 1.35)
+                dh = eff_z - g_z
+                chosen = {
+                    'pos': [round(tx, 3), round(ty, 3), round(eff_z, 3)],
+                    'yaw': round(tyaw, 3),
+                    'habitat': f'perched {dh:.1f} m up a pine tree trunk',
+                    'attenuation': round(float(rng.uniform(0.91, 0.97)), 3),
+                }
+                break
+
+        if role == 'grass' and len(grass) > 0:
+            perm = rng.permutation(len(grass))
+            for idx in perm:
+                gx, gy, _gz = (float(v) for v in grass[idx])
+                jx = gx + float(rng.uniform(-0.25, 0.25))
+                jy = gy + float(rng.uniform(-0.25, 0.25))
+                if not _is_clear_of_obstacles(jx, jy, obstacles, extra_pad=0.35):
+                    continue
+                if not _respects_bounds_and_sep(jx, jy, bounds, placed_xy, min_frog_sep_m, spawn_xy, min_spawn_sep_m):
+                    continue
+                jz = ground_elevation_z(world_name, jx, jy, _gz)
+                chosen = {
+                    'pos': [round(jx, 3), round(jy, 3), round(jz, 3)],
+                    'habitat': 'inside a tall-grass patch',
+                    'attenuation': round(float(rng.uniform(0.83, 0.89)), 3),
+                }
+                break
+
+        if chosen is None:
+            # Either `open_or_behind` or fallback if a habitat pool was saturated
+            trunks_only = obstacles[obstacles[:, 3] == 0.0] if len(obstacles) > 0 else np.zeros((0, 4))
+            if len(trunks_only) > 0 and rng.random() < 0.50:
+                tperm = rng.permutation(len(trunks_only))
+                for idx in tperm:
+                    tcx, tcy, tr, _ = (float(v) for v in trunks_only[idx])
+                    # Place on the side opposite to robot spawn ("behind a pine trunk")
+                    away = math.atan2(tcy - spawn_xy[1], tcx - spawn_xy[0]) if spawn_xy is not None else 0.0
+                    ang = away + float(rng.uniform(-0.45, 0.45))
+                    dist = tr + float(rng.uniform(0.55, 0.95))
+                    px, py = tcx + dist * math.cos(ang), tcy + dist * math.sin(ang)
+                    if not _is_clear_of_obstacles(px, py, obstacles, extra_pad=0.35):
+                        continue
+                    if not _respects_bounds_and_sep(px, py, bounds, placed_xy, min_frog_sep_m,
+                                                    spawn_xy, min_spawn_sep_m):
+                        continue
+                    pz = ground_elevation_z(world_name, px, py, 2.8)
+                    chosen = {
+                        'pos': [round(px, 3), round(py, 3), round(pz, 3)],
+                        'habitat': 'behind a pine tree trunk',
+                        'attenuation': round(float(rng.uniform(0.87, 0.93)), 3),
+                    }
+                    break
+            if chosen is None and bounds is not None:
+                xmin, xmax, ymin, ymax = bounds
+                for _ in range(250):
+                    px = float(rng.uniform(xmin, xmax))
+                    py = float(rng.uniform(ymin, ymax))
+                    if not _is_clear_of_obstacles(px, py, obstacles, extra_pad=0.50):
+                        continue
+                    if not _respects_bounds_and_sep(px, py, bounds, placed_xy, min_frog_sep_m,
+                                                    spawn_xy, min_spawn_sep_m):
+                        continue
+                    pz = ground_elevation_z(world_name, px, py, 2.8)
+                    chosen = {
+                        'pos': [round(px, 3), round(py, 3), round(pz, 3)],
+                        'habitat': 'open forest glade' if pref == 'forest' else 'open hillside trail',
+                        'attenuation': round(float(rng.uniform(0.95, 1.00)), 3),
+                    }
+                    break
+
+        if chosen is None:
+            return False
+        placed_xy.append((chosen['pos'][0], chosen['pos'][1]))
+        assignments[slot_idx] = chosen
+
+    for slot_idx, frog_idx in enumerate(role_order):
+        fr = frogs[int(frog_idx)]
+        spec = assignments[slot_idx]
+        fr['pos'] = spec['pos']
+        fr['habitat'] = spec['habitat']
+        fr['attenuation'] = spec['attenuation']
+        if 'yaw' in spec:
+            fr['yaw'] = spec['yaw']
+        else:
+            fr.pop('yaw', None)
+    return True
+
+
 def randomize_truth_scenario(truth_doc: dict, seed: int, survey_area=None,
                              frog_jitter_m: float = 2.5, spawn_jitter_m: float = 1.5,
-                             min_frog_sep_m: float = 3.0) -> dict:
+                             min_frog_sep_m: float = 3.2, min_spawn_sep_m: float = 4.0) -> dict:
     """Create a deterministic randomized frog & spawn layout from a base truth YAML and `seed`.
 
     - seed == 0: returns a copy of `truth_doc` unchanged (reproducible canonical baseline).
-    - seed != 0: perturbs each frog's XY position within `frog_jitter_m` (clamped inside `survey_area`
-      with margin and enforcing `min_frog_sep_m` pairwise separation), jitters attenuation slightly,
-      and perturbs robot spawn XY (within `spawn_jitter_m`) and yaw (within +-0.4 rad).
+    - seed != 0:
+      * When 3D world scene geometry (`world_scenes.npz`) is available for `forest` or `hill`,
+        samples genuinely new locations across `survey_area` every seed: inside real dense bushes,
+        on top of real tree crowns / fallen tree trunks, perched up real pine trunks, in tall-grass
+        patches, and in open glades, with exact 3D surface elevation `z(x, y)`.
+      * When `spawn_jitter_m > 0`, perturbs robot spawn XY (avoiding obstacles and snapping Z to
+        terrain); pass `spawn_jitter_m=0.0` when Terminal 2 uses a fixed EKF trailhead `initial_pose`.
     """
     out = copy.deepcopy(truth_doc)
     if int(seed) == 0:
         return out
     rng = np.random.default_rng(int(seed) * 10007 + 42)
-    margin = 2.0
-    xmin, xmax, ymin, ymax = (None, None, None, None)
+    margin = 1.8
+    world_name = out.get('world', '')
+    pref = _scene_prefix(world_name)
+    scenes = load_world_scenes()
+    obstacles = scenes.get(f'{pref}_obstacles', np.zeros((0, 4))) if pref else np.zeros((0, 4))
+
+    if survey_area is None and pref == 'forest':
+        survey_area = [18.0, 50.0, -15.0, 15.0]
+    elif survey_area is None and pref == 'hill':
+        survey_area = [-39.0, 48.0, -16.5, 16.5]
+
+    bounds = None
     if survey_area is not None and len(survey_area) == 4:
         xmin, xmax, ymin, ymax = (float(v) for v in survey_area)
+        bounds = (xmin + margin, xmax - margin, ymin + margin, ymax - margin)
 
-    # Perturb spawn pose slightly along safe trail margin
+    # Optionally perturb spawn pose along clear trailhead ground
+    spawn_xy = None
     if 'spawn' in out and len(out['spawn']) >= 4:
         sx, sy, sz, syaw = (float(v) for v in out['spawn'][:4])
-        dx = float(rng.uniform(-spawn_jitter_m, spawn_jitter_m))
-        dy = float(rng.uniform(-0.5 * spawn_jitter_m, 0.5 * spawn_jitter_m))
-        nx, ny = sx + dx, sy + dy
-        if xmin is not None:
-            nx = float(np.clip(nx, xmin + margin, xmax - margin))
-            ny = float(np.clip(ny, ymin + margin, ymax - margin))
-        nyaw = math.atan2(math.sin(syaw + rng.uniform(-0.4, 0.4)),
-                          math.cos(syaw + rng.uniform(-0.4, 0.4)))
-        out['spawn'] = [round(nx, 3), round(ny, 3), round(sz, 3), round(nyaw, 3)]
+        if spawn_jitter_m > 0.0:
+            nx, ny = sx, sy
+            for _ in range(30):
+                cand_x = sx + float(rng.uniform(-spawn_jitter_m, spawn_jitter_m))
+                cand_y = sy + float(rng.uniform(-0.5 * spawn_jitter_m, 0.5 * spawn_jitter_m))
+                if bounds is not None:
+                    cand_x = float(np.clip(cand_x, bounds[0], bounds[1]))
+                    cand_y = float(np.clip(cand_y, bounds[2], bounds[3]))
+                if _is_clear_of_obstacles(cand_x, cand_y, obstacles, extra_pad=0.6):
+                    nx, ny = cand_x, cand_y
+                    break
+            dyaw = float(rng.uniform(-0.4, 0.4))
+            nyaw = math.atan2(math.sin(syaw + dyaw), math.cos(syaw + dyaw))
+            nz = ground_elevation_z(world_name, nx, ny, sz - 0.08) + 0.08 if pref else sz
+            out['spawn'] = [round(nx, 3), round(ny, 3), round(nz, 3), round(nyaw, 3)]
+        spawn_xy = (float(out['spawn'][0]), float(out['spawn'][1]))
 
+    if pref and f'{pref}_grid_z' in scenes and bounds is not None:
+        if _randomize_with_scene(out, pref, scenes, rng, bounds, min_frog_sep_m, spawn_xy, min_spawn_sep_m):
+            out['seed'] = int(seed)
+            return out
+
+    # Generic fallback when custom truth_doc has no precomputed 3D world scene
     placed = []
     for fr in out.get('frogs', []):
         fx, fy, fz = (float(v) for v in fr['pos'][:3])
         best_xy = (fx, fy)
-        for _ in range(30):
-            r = float(rng.uniform(0.5, frog_jitter_m))
-            ang = float(rng.uniform(-math.pi, math.pi))
-            cx, cy = fx + r * math.cos(ang), fy + r * math.sin(ang)
-            if xmin is not None:
-                cx = float(np.clip(cx, xmin + margin, xmax - margin))
-                cy = float(np.clip(cy, ymin + margin, ymax - margin))
-            if all(math.hypot(cx - px, cy - py) >= min_frog_sep_m for px, py in placed):
+        for _ in range(60):
+            if bounds is not None:
+                cx = float(rng.uniform(bounds[0], bounds[1]))
+                cy = float(rng.uniform(bounds[2], bounds[3]))
+            else:
+                r = float(rng.uniform(0.5, frog_jitter_m))
+                ang = float(rng.uniform(-math.pi, math.pi))
+                cx, cy = fx + r * math.cos(ang), fy + r * math.sin(ang)
+            if _respects_bounds_and_sep(cx, cy, bounds, placed, min_frog_sep_m, spawn_xy, min_spawn_sep_m):
                 best_xy = (cx, cy)
                 break
         placed.append(best_xy)
-        fr['pos'] = [round(best_xy[0], 3), round(best_xy[1], 3), round(fz, 3)]
+        nz = ground_elevation_z(world_name, best_xy[0], best_xy[1], fz) if pref else fz
+        fr['pos'] = [round(best_xy[0], 3), round(best_xy[1], 3), round(nz, 3)]
         att = float(fr.get('attenuation', 1.0))
         fr['attenuation'] = round(float(np.clip(att * rng.uniform(0.90, 1.05), 0.65, 1.0)), 3)
     out['seed'] = int(seed)

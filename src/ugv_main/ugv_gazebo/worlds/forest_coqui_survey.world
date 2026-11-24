@@ -50143,7 +50143,7 @@
       <name>coqui_05</name>
       <uri>model://coqui_frog</uri>
       <static>true</static>
-      <pose>47.4 -9.2 4.279 0 0 1.518</pose>
+      <pose>47.261 -11.475 4.114 0 0 1.571</pose>
     </include>
     <include>
       <name>coqui_06</name>

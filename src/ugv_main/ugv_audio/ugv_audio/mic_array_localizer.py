@@ -17,6 +17,8 @@ import math
 import numpy as np
 
 import rclpy
+from rclpy._rclpy_pybind11 import RCLError
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.duration import Duration
 from std_msgs.msg import Bool, Float32MultiArray, String
@@ -443,11 +445,15 @@ def main(args=None):
     node = MicArrayLocalizerNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RCLError:
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
