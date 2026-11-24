@@ -29,6 +29,8 @@ def test_coqui_survey_launch_isolates_rviz_and_slam_and_sim_time(ws_root):
     txt = open(p, encoding='utf-8').read()
     ast.parse(txt)
     assert "'rviz': 'false'" in txt, 'must suppress duplicate RViz in traversability.launch.py'
+    assert "'traversability_params': trav_yaml" in txt, (
+        'must explicitly resolve & forward traversability.yaml so empty arg never shadows traversability.launch.py')
     assert "'rtabmap_localization': 'false'" in txt, 'must isolate RTAB-Map localization boolean'
     assert "DeclareLaunchArgument('use_sim_time'" in txt
     assert "DeclareLaunchArgument('nav2_params_file'" in txt

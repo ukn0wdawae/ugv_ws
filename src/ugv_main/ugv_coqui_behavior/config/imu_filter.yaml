@@ -7,7 +7,7 @@ imu_filter_madgwick:
     publish_tf: false
     world_frame: enu
     fixed_frame: odom
-    gain: 0.05
+    gain: 0.1
     zeta: 0.002
     stateless: false
     remove_gravity_vector: false

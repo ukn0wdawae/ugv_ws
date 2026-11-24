@@ -100,7 +100,7 @@ def _build_nav2_nodes(nav2_yaml, use_sim_time_bool, use_collision_monitor):
             name='behavior_server',
             output='screen',
             parameters=[nav2_yaml],
-            remappings=remappings + ([('cmd_vel', 'cmd_vel_smoothed')] if use_collision_monitor else []),
+            remappings=remappings,
         ),
         Node(
             package='nav2_bt_navigator',
@@ -263,12 +263,12 @@ def setup(context):
     else:
         raise RuntimeError(f'localization must be ekf, slam, or perfect, not {loc!r}')
 
-    trav_args = {'use_sim_time': use_sim_time_str, 'rviz': 'false'}
-    if lc('traversability_params').strip():
-        trav_args['traversability_params'] = lc('traversability_params').strip()
+    trav_share = get_package_share_directory('ugv_traversability')
+    trav_yaml = lc('traversability_params').strip() or os.path.join(trav_share, 'config', 'traversability.yaml')
+    trav_args = {'use_sim_time': use_sim_time_str, 'rviz': 'false', 'traversability_params': trav_yaml}
     acts.append(IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
-            get_package_share_directory('ugv_traversability'), 'launch', 'traversability.launch.py')),
+            trav_share, 'launch', 'traversability.launch.py')),
         launch_arguments=trav_args.items(),
     ))
     acts += _build_nav2_nodes(nav2_yaml, use_sim_time_bool, use_collision_monitor)
