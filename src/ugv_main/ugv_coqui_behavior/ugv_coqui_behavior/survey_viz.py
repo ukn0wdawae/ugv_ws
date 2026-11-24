@@ -4,6 +4,7 @@ coqui_survey_node.build_scene() turns these into visualization_msgs markers:
   hud_text()        the status lines that ride above the robot (what the mission does, frogs, stations, clock)
   ray_segments()    the hunt's acoustic bearings as line segments (agreeing / rejected / before the first fix)
   station_status()  listening stations: covered, open or unreachable
+  TerrainHeights    height of the measured terrain under a point, to lay paths and markers on it
 Like survey_planning, this only uses what the robot itself knows: its poses, the bearings it heard, its own
 estimates and records.
 """
@@ -189,4 +190,52 @@ def station_status(cells, listened, cover_radius, failed, failed_radius):
         else:
             status = 'open'
         out.append((x, y, status))
+    return out
+
+
+# ------------------------------------------------------------------------------------------ terrain
+class TerrainHeights:
+    """Remembers the terrain surface the robot measured (max height per cell) so flat things can be laid on it."""
+
+    def __init__(self, cell=0.2, max_cells=200000):
+        self.cell = float(cell)
+        self.max_cells = int(max_cells)
+        self.h = {}
+
+    def add(self, pts):
+        """pts (N, 3) in one fixed frame: newer heights replace older ones cell by cell."""
+        pts = np.asarray(pts, float).reshape(-1, 3)
+        pts = pts[np.isfinite(pts).all(1)]
+        if not len(pts):
+            return
+        ij = np.floor(pts[:, :2] / self.cell).astype(int)
+        top = {}
+        for (i, j), z in zip(map(tuple, ij), pts[:, 2]):
+            if z > top.get((i, j), -1e9):
+                top[(i, j)] = z
+        self.h.update(top)
+        while len(self.h) > self.max_cells:
+            self.h.pop(next(iter(self.h)))
+
+    def at(self, x, y, default=None):
+        """Terrain height at (x, y) from its cell or the nearest of the 8 around it; `default` when unseen."""
+        i, j = int(math.floor(x / self.cell)), int(math.floor(y / self.cell))
+        if (i, j) in self.h:
+            return self.h[(i, j)]
+        near = [self.h[k] for k in ((i + a, j + b) for a in (-1, 0, 1) for b in (-1, 0, 1)) if k in self.h]
+        return max(near) if near else default
+
+
+def lay_path(xy, terrain, fallback_z, lift=0.05, max_gap=8):
+    """Heights for a flat path laid on the terrain: terrain + lift where it is known, else the last known height (for at
+    most `max_gap` poses), else fallback_z."""
+    out, last, gap = [], None, 0
+    for x, y in xy:
+        z = terrain.at(x, y)
+        if z is not None:
+            last, gap = z, 0
+        else:
+            gap += 1
+        use = z if z is not None else (last if last is not None and gap <= max_gap else None)
+        out.append((use if use is not None else fallback_z) + lift)
     return out

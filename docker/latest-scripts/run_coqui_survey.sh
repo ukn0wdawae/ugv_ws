@@ -4,7 +4,8 @@
 # Start ./docker/latest-scripts/run_coqui_survey_sim.sh first and wait for the robot to appear in Gazebo.
 # Run inside the container (./docker/shell.sh).
 #
-#   ./docker/latest-scripts/run_coqui_survey.sh                       # realistic EKF localization (default)
+#   ./docker/latest-scripts/run_coqui_survey.sh                       # lidar localization, GPS-denied (default)
+#   ./docker/latest-scripts/run_coqui_survey.sh localization:=ekf     # dead reckoning only (drifts)
 #   ./docker/latest-scripts/run_coqui_survey.sh localization:=slam    # EKF + RTAB-Map 3D SLAM
 #   ./docker/latest-scripts/run_coqui_survey.sh localization:=perfect # ground-truth ablation mode
 #   ./docker/latest-scripts/run_coqui_survey.sh mission:=false        # drive manually

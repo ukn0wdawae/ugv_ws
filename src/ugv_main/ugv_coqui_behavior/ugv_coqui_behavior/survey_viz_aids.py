@@ -9,9 +9,10 @@ Lifted grids  Nav2's costmaps and the traversability grid have their origin at z
               forest's ground (z 2.6 .. 3.3 m), so a 3D view hides them below the terrain. Latched copies with
               origin z = (base_frame z in the grid's frame) + grid_z_offset_m are republished:
                   grid_inputs[i] -> grid_outputs[i]   (defaults: GRID_INPUTS -> GRID_OUTPUTS below)
-Lifted paths  Nav2's 2D plans have every pose at z = 0 for the same reason. Copies of flat plans (all z = 0)
-              with every pose at (base_frame z in the plan's frame) + path_z_offset_m are republished; plans that
-              already carry heights pass through unchanged:
+Lifted paths  Nav2's 2D plans have every pose at z = 0 for the same reason. Copies of flat plans (all z = 0) are
+              republished laid on the terrain the robot measured (elevation_topic, kept as it moves) +
+              path_z_offset_m; where no terrain was seen yet, at (base_frame z) + path_z_offset_m. Plans that already
+              carry heights pass through unchanged:
                   path_inputs[i] -> path_outputs[i]   (defaults: PATH_INPUTS -> PATH_OUTPUTS below)
 
     ros2 run ugv_coqui_behavior survey_viz_aids --ros-args -p use_sim_time:=true
@@ -32,6 +33,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
+from .survey_viz import TerrainHeights, lay_path
 from .voxel_map import VoxelSet, crop_range, transform_points
 
 SEEN_TOPIC = '/coqui_survey/seen_cloud'
@@ -82,6 +84,12 @@ def xyz_cloud(points, frame, stamp):
     return msg
 
 
+def place(points, transform):
+    """Points (N, 3) moved by a geometry_msgs/Transform."""
+    t, q = transform.translation, transform.rotation
+    return transform_points(points, (t.x, t.y, t.z), (q.x, q.y, q.z, q.w))
+
+
 class SurveyVizAids(Node):
 
     def __init__(self):
@@ -103,6 +111,11 @@ class SurveyVizAids(Node):
         path_inputs = list(d('path_inputs', PATH_INPUTS).value)
         path_outputs = list(d('path_outputs', PATH_OUTPUTS).value)
         self.path_z_offset = float(d('path_z_offset_m', 0.05).value)
+        self.elevation_topic = d('elevation_topic', '/terrain_traversability/elevation_cloud').value
+        self.elev_period = float(d('elevation_period_s', 1.0).value)
+        self.terrain = TerrainHeights()
+        self.terrain_frame = None
+        self._last_elev = 0.0
         status_period = float(d('status_period_s', 30.0).value)
 
         self.tf_buffer = Buffer()
@@ -142,6 +155,7 @@ class SurveyVizAids(Node):
             self.get_logger().error(f'path_inputs ({len(path_inputs)}) and path_outputs ({len(path_outputs)}) '
                                     'differ in length: only the first pairs are relayed')
         path_pairs = list(zip(path_inputs, path_outputs))
+        self.create_subscription(PointCloud2, self.elevation_topic, self.on_elevation, 1, callback_group=grid_group)
         for src, out in path_pairs:
             pub = self.create_publisher(Path, out, 1)
             self.create_subscription(Path, src, lambda m, pub=pub, out=out: self.on_path(m, pub, out), 1,
@@ -232,12 +246,38 @@ class SurveyVizAids(Node):
         except Exception as e:
             self.get_logger().warn(f'{out}: grid not relayed: {e!r}', throttle_duration_sec=10.0)
 
+    def on_elevation(self, msg):
+        """The traversability node's terrain surface, kept (in the map frame) for laying paths on it."""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._last_elev < self.elev_period:
+            return
+        self._last_elev = now
+        try:
+            tf = self.tf_buffer.lookup_transform(self.target_frame, msg.header.frame_id, Time())
+            self.terrain.add(place(cloud_xyz(msg), tf.transform))
+            self.terrain_frame = self.target_frame
+        except Exception as e:
+            self.get_logger().warn(f'{self.elevation_topic}: not used: {e!r}', throttle_duration_sec=10.0)
+
+    def lift_path(self, msg, out):
+        """Set the heights of a flat path: on the measured terrain in the map frame, back in the path's frame."""
+        frame = msg.header.frame_id
+        fallback = float(self.base_z(frame, out))
+        xy = np.array([[p.pose.position.x, p.pose.position.y, 0.0] for p in msg.poses])
+        zs = [fallback + self.path_z_offset] * len(xy)
+        if self.terrain_frame is not None:
+            to_map = self.tf_buffer.lookup_transform(self.terrain_frame, frame, Time())
+            m = place(xy, to_map.transform)
+            dz = m[:, 2]      # the path's frame may itself be off in height
+            zs = [z - d for z, d in zip(lay_path(m[:, :2], self.terrain, fallback + float(dz[0]),
+                                                 self.path_z_offset), dz)]
+        for p, z in zip(msg.poses, zs):
+            p.pose.position.z = float(z)
+
     def on_path(self, msg, pub, out):
         try:
             if msg.poses and all(abs(p.pose.position.z) < 1e-6 for p in msg.poses):  # a flat 2D plan
-                z = float(self.base_z(msg.header.frame_id, out) + self.path_z_offset)
-                for p in msg.poses:
-                    p.pose.position.z = z
+                self.lift_path(msg, out)
             pub.publish(msg)
         except Exception as e:
             self.get_logger().warn(f'{out}: path not relayed: {e!r}', throttle_duration_sec=10.0)

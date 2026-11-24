@@ -27,7 +27,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from .cloud_utils import apply, cloud_to_xyz, quat_to_rot, rot_to_rpy, rpy_to_rot, transform_to_matrix, \
     xyz_to_cloud_fields
-from .elevation_map import RollingCostGrid, RollingElevationMap
+from .elevation_map import RollingCostGrid, RollingElevationMap, height_shift
 from .features import TraversabilityParams, clamp_footprint_cost, compute_traversability
 
 
@@ -113,6 +113,7 @@ class TraversabilityNode(Node):
         self.last_xy = None
         self.last_z_stamp = -1.0
         self.odom_is_3d = False
+        self.z_fix = 0.0          # 3D odometry: map height datum minus odometry height (its drift since the start)
         self.tf_z0 = None
         self.last_pose = None  # (stamp_msg, T_fixed_robot_compensated, T_fixed_robot_tf)
         self.stats = {'clouds': 0, 'points': 0, 'proc_ms': 0.0, 'pub_ms': 0.0, 'pubs': 0, 'tf_drop': 0}
@@ -223,7 +224,9 @@ class TraversabilityNode(Node):
                                        '(roll/pitch/z present): IMU attitude compensation disabled')
         rp = self._imu_rp_at(stamp)
         if not self.use_imu_attitude or self.odom_is_3d or rp is None:
-            return T_tf, T_tf, tfm
+            T = T_tf.copy()
+            T[2, 3] += self.z_fix
+            return T, T_tf, tfm
         x, y = T_tf[0, 3], T_tf[1, 3]
         _, _, yaw = rot_to_rpy(T_tf[:3, :3])
         roll, pitch = rp
@@ -300,17 +303,20 @@ class TraversabilityNode(Node):
         self.map.insert(pts_f, stamp, sensor_xy=(T_fr[0, 3], T_fr[1, 3]),
                         range_weight_scale=self.range_weight_scale,
                         stabilize_attitude=self.stabilize_attitude)
-        # Anchor open-loop 2D-odometry z_est to the elevation map's measured ground height around the robot
-        # so z_est never drifts above/below scanned ground and creates a fake step behind the wheels.
+        # Odometry height drifts (2D: integrated z_est; 3D: ~1 cm/s while turning), and ground scanned a few seconds ago
+        # would turn into a step next to ground scanned now. Anchor the height to the map's own ground around the robot.
+        # What is published is moved back to the odometry's height (see height_shift), so the terrain, the robot and
+        # everything drawn in RViz stay on the same surface.
         normal = T_fr[:3, 2] if self.footprint_follow_slope else None
         zr_foot = zr
-        if self.use_imu_attitude and not self.odom_is_3d:
-            z_map = self.map.ground_height_at(T_fr[0, 3], T_fr[1, 3], normal=normal)
-            if z_map is not None:
-                z_err = z_map - zr
-                if abs(z_err) < 0.20:
-                    self.z_est += 0.25 * float(np.clip(z_err, -0.04, 0.04))
-                    zr_foot = z_map
+        z_map = self.map.ground_height_at(T_fr[0, 3], T_fr[1, 3], normal=normal)
+        if z_map is not None and abs(z_map - zr) < 0.20:
+            dz = 0.25 * float(np.clip(z_map - zr, -0.04, 0.04))
+            if self.use_imu_attitude and not self.odom_is_3d:
+                self.z_est += dz
+            else:
+                self.z_fix += dz
+            zr_foot = z_map
         self.map.set_footprint(T_fr[0, 3], T_fr[1, 3], zr_foot, self.footprint_radius, stamp,
                                normal=normal)
         self.last_pose = (tfm.header.stamp, T_fr, T_tf)
@@ -383,20 +389,21 @@ class TraversabilityNode(Node):
             self.pub_global_grid.publish(gg)
 
         known = cost >= 0
+        H = self.map.h - height_shift(T_fr, T_tf, self.use_imu_attitude and not self.odom_is_3d)
         if self.pub_elev.get_subscription_count():
-            pts = np.stack([X[known], Y[known], self.map.h[known]], axis=1)
+            pts = np.stack([X[known], Y[known], H[known]], axis=1)
             self.pub_elev.publish(self.make_cloud(pts, self.fixed_frame, stamp, cost[known].astype(np.float32)))
 
         # Nav2 clouds in robot frame (sensor origin = robot -> correct raytracing)
         T_inv = np.linalg.inv(T_tf)
         lethal = cost >= self.obstacle_cost
-        pts = np.stack([X[lethal], Y[lethal], self.map.h[lethal]], axis=1)
+        pts = np.stack([X[lethal], Y[lethal], H[lethal]], axis=1)
         self.pub_obst.publish(self.make_cloud(apply(T_inv, pts), self.robot_frame, stamp))
         free = known & ~lethal
         sub = np.zeros_like(free)
         sub[::self.ground_stride, ::self.ground_stride] = True
         free &= sub
-        pts = np.stack([X[free], Y[free], self.map.h[free]], axis=1)
+        pts = np.stack([X[free], Y[free], H[free]], axis=1)
         self.pub_ground.publish(self.make_cloud(apply(T_inv, pts), self.robot_frame, stamp))
         self.stats['pub_ms'] += (time.perf_counter() - t0) * 1e3
         self.stats['pubs'] += 1

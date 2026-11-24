@@ -171,3 +171,14 @@ def test_footprint_never_raises_ground_into_fake_step_when_z_est_drifts():
     L = compute_traversability(m.h, TraversabilityParams(step_outlier_trim=1))
     near = (np.hypot(X, Y) < 1.0) & (L['cost'] >= 0)
     assert int((L['cost'][near] >= 100).sum()) == 0, 'set_footprint stamped a fake lethal curb on drifted z_est'
+
+
+def test_published_terrain_fits_the_robot_tf_with_3d_odometry():
+    """Regression (2026-11-24): in RViz the terrain floated above the robot. With 3D odometry the map keeps its own
+    drift-free height; what is published must be moved by the drift, so it touches the wheels in the viewer's TF."""
+    from ugv_traversability.elevation_map import height_shift
+    T_tf, T_fr = np.eye(4), np.eye(4)
+    T_tf[2, 3], T_fr[2, 3] = 2.40, 2.65           # odometry has drifted 0.25 m down
+    ground_in_map = 2.65
+    assert abs(ground_in_map - height_shift(T_fr, T_tf, odom_2d=False) - T_tf[2, 3]) < 1e-9
+    assert height_shift(T_fr, T_tf, odom_2d=True) == 0.0       # 2D odometry: no height in the TF to fit

@@ -2,7 +2,8 @@
 
     ros2 launch ugv_coqui_behavior coqui_survey_sim.launch.py [profile:=forest|hill]
          [gui:=true] [follow:=false] [show_truth:=false] [seed:=0] [randomize:=false]
-         [motor_noise_gain:=0.025] [overlap_prob:=0.25] [echo_gain:=0.12]
+         [motor_noise_gain:=0.06] [overlap_prob:=0.25] [echo_gain:=0.12]
+         [schedule:=chorus|turns] [call_variation:=true]
          [x:= y:= z:= yaw:=]
 
 This is "the world". The robot stack (coqui_survey.launch.py) runs separately and never reads the
@@ -142,6 +143,10 @@ def setup(context):
                  'truth_file': truth_file,
                  'seed': seed,
                  'start_delay_sec': 8.0,
+                 'schedule': lc('schedule'),
+                 'call_period_sec': 0.25 if lc('schedule') == 'chorus' else 0.75,   # audio frames per second
+                 'max_audible_range_m': 30.0,
+                 'call_variation': lc('call_variation') == 'true',
                  'publish_truth_markers': lc('show_truth') == 'true',
                  'motor_noise_gain': float(lc('motor_noise_gain')),
                  'overlap_prob': float(lc('overlap_prob')),
@@ -176,7 +181,7 @@ def generate_launch_description():
         DeclareLaunchArgument('seed', default_value='0', description='random seed for schedule & layout'),
         DeclareLaunchArgument('randomize', default_value='false',
                               description='when true and seed != 0, randomize frog positions and spawn pose'),
-        DeclareLaunchArgument('motor_noise_gain', default_value='0.025',
+        DeclareLaunchArgument('motor_noise_gain', default_value='0.06',
                               description='motor self-noise amplitude proportional to wheel velocity'),
         DeclareLaunchArgument('overlap_prob', default_value='0.25',
                               description='probability of overlapping second frog call in the same frame'),
@@ -184,6 +189,10 @@ def generate_launch_description():
                               description='multipath foliage/ground echo gain'),
         DeclareLaunchArgument('ambient_clutter_prob', default_value='0.20',
                               description='probability of non-Coqui insect/bird clutter'),
+        DeclareLaunchArgument('schedule', default_value='chorus',
+                              description='chorus: every frog on its own rhythm | turns: one frog at a time'),
+        DeclareLaunchArgument('call_variation', default_value='true',
+                              description='call level varies per frog, call, path and direction'),
         DeclareLaunchArgument('x', default_value=''),
         DeclareLaunchArgument('y', default_value=''),
         DeclareLaunchArgument('z', default_value=''),

@@ -23,7 +23,7 @@ def test_rtabmap_launch_handles_non_bool_parent_localization_arg(ws_root):
 
 def test_coqui_survey_launch_isolates_rviz_and_slam_and_sim_time(ws_root):
     """Regression: coqui_survey.launch.py must pass rviz:='false' to traversability.launch.py,
-    rtabmap_localization:='false' to rtabmap_3d_lidar.launch.py, default localization to 'ekf',
+    rtabmap_localization:='false' to rtabmap_3d_lidar.launch.py, default localization to 'lidar' (GPS-denied),
     and expose use_sim_time + nav2_params_file + bt_xml launch arguments."""
     p = os.path.join(ws_root, 'src', 'ugv_main', 'ugv_coqui_behavior', 'launch', 'coqui_survey.launch.py')
     txt = open(p, encoding='utf-8').read()
@@ -35,7 +35,7 @@ def test_coqui_survey_launch_isolates_rviz_and_slam_and_sim_time(ws_root):
     assert "DeclareLaunchArgument('use_sim_time'" in txt
     assert "DeclareLaunchArgument('nav2_params_file'" in txt
     assert "DeclareLaunchArgument('bt_xml'" in txt
-    assert "DeclareLaunchArgument('localization', default_value='ekf'" in txt
+    assert "DeclareLaunchArgument('localization', default_value='lidar'" in txt
 
 
 def test_docker_latest_scripts_paths_and_safety_checks(ws_root):

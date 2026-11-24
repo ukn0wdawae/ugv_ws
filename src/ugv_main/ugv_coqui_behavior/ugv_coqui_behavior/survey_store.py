@@ -3,14 +3,14 @@
 Without SLAM there is no map file, so the survey keeps its own record, written after every frog:
 
   <output_dir>/<run_id>/
-      survey.yaml      frogs in the map frame + WGS84 lat/lon, uncertainty, photo, robot pose; mission info
-      frogs.geojson    the same frogs as GeoJSON points (opens in QGIS / geojson.io / Google Earth)
+      survey.yaml      frogs in the map frame, uncertainty, photo, robot pose; mission info; `unresolved`: frogs that
+                       were heard but not located (rough place, why)
+      frogs.geojson    the frogs as GeoJSON points, only when the operator gave a geo_ref (no GPS is used)
       photos/          annotated pan-tilt camera photos
       events.jsonl     timestamped mission log (one JSON object per line)
 
-Positions are in the `map` frame. In simulation without SLAM, map == odom == Gazebo world, so the
-record lines up with the world exactly. With RTAB-Map the same file is in RTAB-Map's map frame
-(store the database next to it). Lat/lon is independent of either and is what a field team uses.
+Positions are in the `map` frame, which starts at the trailhead pose of the profile (initial_pose). The forest is
+GPS-denied: nothing here comes from a GPS. With geo_ref (one point whose lat/lon was surveyed) lat/lon is added.
 `load_known()` reads a previous survey.yaml so a new run skips frogs that were already recorded.
 """
 import json
@@ -28,6 +28,7 @@ class SurveyStore:
         self.meta = dict(meta, run_id=run_id, started_wall=time.strftime('%Y-%m-%d %H:%M:%S'))
         self.frogs = []
         self.mission = {}
+        self.unresolved = []
         self._write()
 
     # ----------------------------------------------------------------------------------- frogs
@@ -45,6 +46,10 @@ class SurveyStore:
         self.mission.update(kw)
         self._write()
 
+    def set_unresolved(self, leads):
+        self.unresolved = list(leads)
+        self._write()
+
     def log_event(self, event, **kw):
         kw.update(event=event, wall=round(time.time(), 2))
         with open(os.path.join(self.dir, 'events.jsonl'), 'a') as f:
@@ -52,7 +57,7 @@ class SurveyStore:
 
     # ------------------------------------------------------------------------------------ files
     def _write(self):
-        doc = {'survey': self.meta, 'mission': self.mission, 'frogs': self.frogs}
+        doc = {'survey': self.meta, 'mission': self.mission, 'frogs': self.frogs, 'unresolved': self.unresolved}
         _atomic_write(os.path.join(self.dir, 'survey.yaml'), yaml.safe_dump(doc, sort_keys=False))
         feats = []
         for f in self.frogs:

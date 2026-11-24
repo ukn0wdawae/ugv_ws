@@ -31,6 +31,8 @@ setup(
             'eval_survey = ugv_coqui_behavior.eval_survey:main',
             'survey_viz_aids = ugv_coqui_behavior.survey_viz_aids:main',
             'gt_odom_bridge = ugv_coqui_behavior.gt_odom_bridge:main',
+            'wheel_odom_relay = ugv_coqui_behavior.wheel_odom_relay:main',
+            'lidar_localizer = ugv_coqui_behavior.lidar_localizer:main',
         ],
     },
 )

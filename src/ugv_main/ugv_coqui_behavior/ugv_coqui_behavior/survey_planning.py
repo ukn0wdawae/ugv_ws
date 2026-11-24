@@ -109,12 +109,34 @@ class Grid:
         return None
 
 
+# --------------------------------------------------------------------------------------- loudness
+# A call fades 20 dB per decade of distance, so how loud it is says roughly how far away the frog is. That is
+# what tells two frogs on the same bearing apart, and what exposes a "fix" that is really two frogs' bearings
+# crossing: the crossing point is metres from where their loudness puts them.
+def source_level_db(loudness_db, range_m):
+    """Loudness the caller would have 1 m away, if it is `range_m` from where `loudness_db` was heard."""
+    return float(loudness_db) + 20.0 * math.log10(max(float(range_m), 0.35))
+
+
+def implied_range_m(loudness_db, cfg):
+    """Distance at which a nominal caller (cfg['loudness_ref_db'] at 1 m) would be this loud."""
+    return 10.0 ** ((float(cfg.get('loudness_ref_db', 0.0)) - float(loudness_db)) / 20.0)
+
+
+def call_is_near(loudness_db, cfg):
+    """Tier 2: is this call loud enough (close enough) to interrupt exploration and hunt it?"""
+    return implied_range_m(loudness_db, cfg) <= float(cfg.get('hunt_trigger_range_m', 12.0))
+
+
 # ------------------------------------------------------------------------------------ known frogs
-def bearing_points_at_known(robot_xy, bearing, known, radius, margin_deg=5.0, max_cone_deg=22.0):
+def bearing_points_at_known(robot_xy, bearing, known, radius, margin_deg=5.0, max_cone_deg=22.0,
+                            loudness=None, cfg=None):
     """Does an acoustic bearing from robot_xy point at an already-recorded frog?
     Returns that frog (dict with 'pos') or None. A bearing is attributed to a known frog when it passes
     within `radius` of it (plus an angular margin for DOA noise, capped at `max_cone_deg` beyond 2.5 m
-    so one recorded frog cannot blind a wide sector of the survey area)."""
+    so one recorded frog cannot blind a wide sector of the survey area).
+    With `loudness` (dB) and `cfg` the call must also be about as loud as that frog would be from here: a
+    frog behind a recorded one (or in front of it) is a different, fainter (or louder) call."""
     for fr in known:
         fx, fy = fr['pos'][0], fr['pos'][1]
         d = math.hypot(fx - robot_xy[0], fy - robot_xy[1])
@@ -123,8 +145,16 @@ def bearing_points_at_known(robot_xy, bearing, known, radius, margin_deg=5.0, ma
         tol = math.atan2(radius, d) + math.radians(margin_deg)
         if d >= 2.5 and max_cone_deg is not None:
             tol = min(tol, math.radians(max_cone_deg))
-        if abs(wrap(math.atan2(fy - robot_xy[1], fx - robot_xy[0]) - bearing)) <= tol:
-            return fr
+        if abs(wrap(math.atan2(fy - robot_xy[1], fx - robot_xy[0]) - bearing)) > tol:
+            continue
+        if loudness is not None and cfg is not None:
+            ref = fr.get('source_level_db')
+            gate = float(cfg.get('loudness_spread_db', 5.0)) + 1.0
+            if ref is None:
+                ref, gate = float(cfg.get('loudness_ref_db', 0.0)), float(cfg.get('loudness_gate_db', 10.0))
+            if abs(source_level_db(loudness, d) - float(ref)) > gate:
+                continue
+        return fr
     return None
 
 
@@ -140,6 +170,26 @@ def in_frog_keepout(xy, known, keepout_m):
     if not known or keepout_m <= 0.0:
         return False
     return near_known(xy, known, keepout_m) is not None
+
+
+def heard_from_here(bearings, robot_xy, est_xy, cfg, tol_deg=20.0):
+    """Which of these bearings [(t, origin, dir, loudness)] are the frog believed to be at est_xy, heard from robot_xy:
+    in its direction, and as loud as a frog that near. tol_deg allows for a fix that is a few tenths of a metre off."""
+    v = (est_xy[0] - robot_xy[0], est_xy[1] - robot_xy[1])
+    d = max(math.hypot(*v), 0.35)
+    tol = math.radians(tol_deg) + math.atan2(0.3, d)
+    out = []
+    for o in bearings:
+        if abs(wrap(math.atan2(float(o[2][1]), float(o[2][0])) - math.atan2(v[1], v[0]))) <= tol and \
+                abs(source_level_db(o[3], d) - float(cfg.get('loudness_ref_db', 0.0))) <= float(cfg.get('loudness_gate_db', 10.0)):
+            out.append(o)
+    return out
+
+
+def pan_error(robot_xy, robot_yaw, pan, est_xy):
+    """How far (rad, signed) the camera's pan (+ = right) is from pointing at est_xy with the robot at robot_xy / robot_yaw."""
+    want = -wrap(math.atan2(est_xy[1] - robot_xy[1], est_xy[0] - robot_xy[0]) - robot_yaw)
+    return wrap(pan - want)
 
 
 def classify_height(frog_z, ground_z, elevated_threshold):
@@ -195,14 +245,32 @@ def station_candidates(robot_xy, cells, listened, cover_radius, failed, grid, cf
 
 
 # -------------------------------------------------------------------------- frontier exploration
+def frontier_handoff(dist_goal, driven_m, age_s, still_unknown, cfg, dist_start=None):
+    """Should exploration leave its current frontier for the next one? Yes when nearly there, or when the sensors have
+    already seen past it AND the robot has committed to it for a while. Without the commitment a frontier is
+    "seen" a second after it is chosen, and the robot picks a new one (often behind it) about once a second.
+    "Nearly there" is frontier_handoff_m, but never more than 40 % of the distance the drive started with: a frontier
+    2.4 m away is not nearly there at 2.0 m."""
+    near = float(cfg['frontier_handoff_m'])
+    if dist_start is not None:
+        near = min(near, 0.4 * float(dist_start))
+    if dist_goal <= near:
+        return True
+    if still_unknown:
+        return False
+    return driven_m >= float(cfg.get('frontier_commit_m', 2.5)) or age_s >= float(cfg.get('frontier_commit_sec', 8.0))
+
+
 def frontier_candidates(robot_xy, robot_yaw, area, grid, failed, cfg, weak_rays=None,
-                        uncovered_xy=None, cover_radius=None, known=None):
+                        uncovered_xy=None, cover_radius=None, known=None, prev_goal=None):
     """Industry-standard frontier detection inside `area` [xmin, xmax, ymin, ymax]: clusters of
     known-free cells bordering unknown (-1) cells. Ranked lowest-cost first combining travel distance,
     cluster size (information gain), heading continuity (avoid oscillating), and optional Tier-1
     acoustic whisper rays [(origin_xy, bearing_rad, snr)] that pull exploration toward faint frogs.
     When `uncovered_xy` and `cover_radius` are given, frontiers that are not near any remaining
     uncovered survey cell (e.g. rolling-window/tree shadows in already-covered areas) are skipped.
+    `prev_goal`: the frontier being driven to; frontiers near it get a bonus (frontier_commit_bonus_m) so a small
+    change in the scores does not turn the robot around.
     Returns [(score, (x, y), cluster_size)]."""
     if grid is None:
         return []
@@ -293,6 +361,8 @@ def frontier_candidates(robot_xy, robot_yaw, area, grid, failed, cfg, weak_rays=
         terrain_w = float(cfg.get('terrain_cost_weight', 0.08))
         cell_cost = max(0, grid.cost(gx, gy))
         score = dist - size_w * min(len(comp), 40) + head_w * heading_err + terrain_w * cell_cost
+        if prev_goal is not None and math.hypot(gx - prev_goal[0], gy - prev_goal[1]) <= 3.0:
+            score -= float(cfg.get('frontier_commit_bonus_m', 3.0))
         if weak_rays:
             for (ox, oy), br, _ in weak_rays:
                 vx, vy = gx - ox, gy - oy
@@ -317,24 +387,31 @@ def frontier_still_unknown(goal_xy, grid, radius_m=1.2):
 
 
 def check_passive_triangulation(passive_obs, known, cfg):
-    """Check whether passive bearings [(t, origin xyz, dir xyz, snr)] collected while exploring
+    """Check whether passive bearings [(t, origin xyz, dir xyz, loudness)] collected while exploring
     already cross-triangulate an unrecorded frog. Anchors on the newest bearing.
-    Returns (tri_dict, anchor_obs) or (None, None)."""
+    Returns (tri_dict, anchor_obs) or (None, None). Only a fix that could be recorded (triangulation_done)
+    starts a hunt this way: anything weaker is better served by listening to the next call."""
     if len(passive_obs) < 4:
         return None, None
     anchor_obs = passive_obs[-1]
     a_o, a_d = anchor_obs[1], anchor_obs[2]
     a_bearing = math.atan2(float(a_d[1]), float(a_d[0]))
-    if bearing_points_at_known((float(a_o[0]), float(a_o[1])), a_bearing, known, cfg['known_frog_radius_m']):
+    use_loud = 'loudness_spread_db' in cfg
+    if bearing_points_at_known((float(a_o[0]), float(a_o[1])), a_bearing, known, cfg['known_frog_radius_m'],
+                               loudness=anchor_obs[3] if use_loud else None, cfg=cfg if use_loud else None):
         return None, None
     times = [o[0] for o in passive_obs]
     origins = [o[1] for o in passive_obs]
     dirs = [o[2] for o in passive_obs]
     groups = bout_ids(times, cfg.get('bout_gap_s', 1.2))
-    tri = robust_triangulate(origins, dirs, (a_o, a_d), cfg, groups=groups)
+    tri = robust_triangulate(origins, dirs, (a_o, a_d), cfg, groups=groups,
+                             loudness=[o[3] for o in passive_obs] if use_loud else None)
     if tri is None:
         return None, None
-    if tri['n_origins'] < 2 or tri['parallax_deg'] < 12.0 or tri['inliers'] < 4:
+    if use_loud:
+        if not triangulation_done(tri, cfg):
+            return None, None
+    elif tri['n_origins'] < 2 or tri['parallax_deg'] < 12.0 or tri['inliers'] < 4:
         return None, None
     if near_known(tri['pos'], known, cfg['known_frog_radius_m']):
         return None, None
@@ -400,10 +477,14 @@ def baseline_step_candidates(robot_xy, frog_xy, origins, grid, cfg, allow_unknow
 
 
 def triangulation_done(tri, cfg):
-    """Convergence test on a robust_triangulate() result."""
-    return (tri is not None
-            and tri['inliers'] >= cfg['min_rays']
-            and tri['n_origins'] >= cfg.get('min_places', 3)
+    """Convergence test on a robust_triangulate() result. A place only counts when the frog was heard there at least
+    min_rays_per_place times: single stray bearings from three places line up by chance in a dense chorus."""
+    if tri is None:
+        return False
+    solid = sum(1 for n in tri.get('rays_per_place', [99] * tri['n_origins']) if n >= int(cfg.get('min_rays_per_place', 1)))
+    return (tri['inliers'] >= cfg['min_rays']
+            and solid >= cfg.get('min_places', 3)
+            and tri.get('level_sd_db', 0.0) <= float(cfg.get('max_level_sd_db', 99.0))
             and tri['baseline_m'] >= cfg['min_baseline_m']
             and tri['parallax_deg'] >= cfg['min_parallax_deg']
             and tri['uncertainty_m'] <= cfg['max_uncertainty_m'])
@@ -429,11 +510,16 @@ def accept_partial_triangulation(tri, cfg):
             and tri['rms_deg'] <= max_rms)
 
 
-def should_accept_record(tri, visually_confirmed, vantage, los_clear, grid, cfg):
+def should_accept_record(tri, visually_confirmed, vantage, los_clear, grid, cfg, heard_near=None):
     """Decide whether a photographed frog estimate should be saved into the survey record.
 
     Prevents recording a false frog (e.g. 5 m off in open ground with an empty photo) which would
     otherwise poison `known` and blind bearings in a wide cone around the false position.
+    A frog in the photo is recorded. A frog that is NOT in the photo is recorded only on a complete fix
+    (triangulation_done: three or more listening places, agreeing bearings and loudness); "the view was blocked" is
+    never enough on its own. Anything else stays a lead to come back to.
+    heard_near: whether the frog was heard from the viewpoint in the direction of the fix (None: not at a viewpoint). At a
+    few metres a real frog is loud; an unseen one that is never heard there is not there.
     Returns (accept: bool, reason: str).
     """
     if visually_confirmed:
@@ -448,10 +534,11 @@ def should_accept_record(tri, visually_confirmed, vantage, los_clear, grid, cfg)
         open_ground = (0 <= cell_cost < int(cfg['lethal_cost']))
     if reject_open and vantage == 'reached' and los_clear and open_ground:
         return False, 'photo_contradicts_open_ground'
-    # Occluded or vantage unreachable: require solid acoustic convergence
-    if triangulation_done(tri, cfg) or accept_partial_triangulation(tri, cfg):
+    if heard_near is False:
+        return False, 'unseen_and_not_heard_at_the_viewpoint'
+    if triangulation_done(tri, cfg):
         return True, 'acoustic_only_occluded'
-    return False, 'weak_unconfirmed_fix'
+    return False, 'unseen_and_not_enough_places'
 
 
 def _angles_to(x, origins, dirs):
@@ -465,7 +552,8 @@ def _angles_to(x, origins, dirs):
 
 
 def bout_ids(times, gap_s):
-    """Split bearings into calling bouts: a new bout starts after a silence longer than gap_s."""
+    """Split bearings into calling bouts: a new bout starts after a silence longer than gap_s.
+    Only meaningful when frogs take turns; a real chorus interleaves them (see ray_groups)."""
     ids, b = [], 0
     for i, t in enumerate(times):
         if i and t - times[i - 1] > gap_s:
@@ -474,36 +562,92 @@ def bout_ids(times, gap_s):
     return np.asarray(ids)
 
 
-def _inlier_mask(ang, r, tol, max_r, groups):
+def ray_groups(origins, dirs, loudness=None, link_deg=3.0, place_m=0.3, loud_db=6.0):
+    """Group bearings that are one frog heard from one listening place: origins within place_m of each other,
+    bearings chained within link_deg, and (when given) loudness within loud_db. Does not need frogs to take turns
+    the way bout_ids does, so it works in a chorus."""
+    origins = np.asarray(origins, float)
+    dirs = np.asarray(dirs, float)
+    n = len(origins)
+    br = np.arctan2(dirs[:, 1], dirs[:, 0]) if n else np.zeros(0)
+    ids = -np.ones(n, int)
+    cur = 0
+    for i in range(n):
+        if ids[i] >= 0:
+            continue
+        ids[i] = cur
+        stack = [i]
+        while stack:
+            k = stack.pop()
+            near = (ids < 0) & (np.hypot(origins[:, 0] - origins[k, 0], origins[:, 1] - origins[k, 1]) <= place_m)
+            near &= np.abs(np.arctan2(np.sin(br - br[k]), np.cos(br - br[k]))) <= math.radians(link_deg)
+            if loudness is not None:
+                near &= np.abs(np.asarray(loudness, float) - float(loudness[k])) <= loud_db
+            for j in np.nonzero(near)[0]:
+                ids[j] = cur
+                stack.append(int(j))
+        cur += 1
+    return ids
+
+
+def _inlier_mask(ang, r, tol, max_r, groups, loud_ok=None):
     ok = (r <= max_r) & (r > 0.2)
+    if loud_ok is not None:
+        ok &= loud_ok
     if groups is None:
         return (ang <= tol) & ok
     m = np.zeros(len(ang), bool)
     for g in np.unique(groups):
         sel = groups == g
-        if np.median(ang[sel]) <= tol:          # the bout as a whole points at x
+        if np.median(ang[sel]) <= tol:          # the group as a whole points at x
             m |= sel & (ang <= 2.5 * tol) & ok
     return m
 
 
-def robust_triangulate(origins, dirs, anchor, cfg, rng_seed=0, groups=None):
+def fix_sigma_m(x, places, sigma_rad, pose_sigma=0.05):
+    """1-sigma position error (m) along the worst direction of a fix at x from one bearing per listening place,
+    each `sigma_rad` noisy and taken from a place known to `pose_sigma` m. One row per place, not per bearing:
+    the bearings heard at one place share their errors, so hearing more calls there does not buy accuracy.
+    Grows without bound when the places see x from (nearly) the same or exactly opposite directions."""
+    H = np.zeros((2, 2))
+    for p in places:
+        v = np.asarray(x[:2], float) - np.asarray(p[:2], float)
+        r2 = max(float(v @ v), 1e-4)
+        j = np.array([-v[1], v[0]]) / r2
+        H += np.outer(j, j) / (sigma_rad ** 2 + pose_sigma ** 2 / r2)
+    lam = float(np.linalg.eigvalsh(H)[0])
+    return float('inf') if lam <= 1e-9 else 1.0 / math.sqrt(lam)
+
+
+def robust_triangulate(origins, dirs, anchor, cfg, rng_seed=0, groups=None, loudness=None, anchor_loudness=None):
     """Locate ONE frog from bearings that may include calls of other frogs.
 
     origins (N,3), dirs (N,3 unit): every acoustic bearing heard during the hunt (map frame).
-    groups (N,) optional calling-bout ids (bout_ids): a bout is one frog, so it is accepted or rejected
-            as a whole by its median angle (a neighbouring frog's bout a few degrees off is dropped).
+    groups (N,) optional group ids (ray_groups, or bout_ids when frogs take turns): a group is one frog, so it is
+            accepted or rejected as a whole by its median angle (a neighbouring frog's calls a few degrees off
+            are dropped).
     anchor: (origin, dir) of the call that started the hunt; the frog must lie along it (within
             cfg['anchor_tol_deg']), which is what ties the hunt to that frog.
-    Hypotheses are pairwise intersections of rays from different places; the one most bearings agree
-    with (within cfg['ray_inlier_deg']) wins and is refined by least squares on its inliers. Height is
+    loudness (N,) optional, dB (cfg['loudness_ref_db'] = a nominal call heard at 1 m): every bearing used must be as
+            loud as a single frog at that spot would be from its listening place (within loudness_spread_db),
+            and that frog must be about as loud as a coqui (within loudness_gate_db). Without this, bearings of
+            two frogs on opposite sides of the robot cross next to it and look like a perfect fix.
+    Hypotheses are pairwise intersections of rays from different places, anchor rays first; the one most bearings
+    agree with (within cfg['ray_inlier_deg']) wins and is refined by least squares on its inliers. Height is
     the median of the inliers' elevation rays at their range.
     Returns None until bearings from two places intersect along the anchor, else a dict:
-      pos [x,y,z], inliers, n_origins, baseline_m, parallax_deg, rms_deg, uncertainty_m, inlier_mask."""
+      pos [x,y,z], inliers, n_origins, baseline_m, parallax_deg, rms_deg, uncertainty_m, source_level_db, level_sd_db
+      (spread of the distance-corrected level between places), places, rays_per_place, inlier_mask."""
     origins = np.asarray(origins, float)
     dirs = np.asarray(dirs, float)
     n = len(origins)
     if n < 2:
         return None
+    loud = None if loudness is None else np.asarray(loudness, float)
+    spread = float(cfg.get('loudness_spread_db', 5.0))
+    gate = float(cfg.get('loudness_gate_db', 10.0))
+    ref = float(cfg.get('loudness_ref_db', 0.0))
+    min_range = float(cfg.get('min_fix_range_m', 0.6))
     tol = math.radians(cfg['ray_inlier_deg'])
     a_o, a_d = np.asarray(anchor[0], float), np.asarray(anchor[1], float)
     a_tol = math.radians(cfg['anchor_tol_deg'])
@@ -516,20 +660,49 @@ def robust_triangulate(origins, dirs, anchor, cfg, rng_seed=0, groups=None):
     I, J, sep = I[keep], J[keep], sep[keep]
     if len(I) == 0:
         return None
-    if groups is not None:   # pairs from different bouts, or same bout once robot moved >= 1.0 m
+    if groups is not None:   # pairs from different groups, or same group once robot moved >= 1.0 m
         keep = (np.asarray(groups)[I] != np.asarray(groups)[J]) | (sep >= 1.0)
         I, J = I[keep], J[keep]
         if len(I) == 0:
             return None
-    if len(I) > 600:
-        sel = rng.choice(len(I), 600, replace=False)
+    if len(I) > 900:   # keep every pair with a bearing of the anchoring call, sample the rest
+        a_b = math.atan2(a_d[1], a_d[0])
+        br = np.arctan2(dirs[:, 1], dirs[:, 0])
+        is_a = (np.hypot(origins[:, 0] - a_o[0], origins[:, 1] - a_o[1]) < 0.3) & \
+            (np.abs(np.arctan2(np.sin(br - a_b), np.cos(br - a_b))) <= a_tol)
+        with_a = np.nonzero(is_a[I] | is_a[J])[0]
+        rest = np.nonzero(~(is_a[I] | is_a[J]))[0]
+        if len(with_a) > 600:
+            with_a = rng.choice(with_a, 600, replace=False)
+        if len(rest) > 300:
+            rest = rng.choice(rest, 300, replace=False)
+        sel = np.concatenate([with_a, rest])
         I, J = I[sel], J[sel]
+
     def _on_anchor(pt):
         va = pt - a_o[:2]
         dist = float(np.linalg.norm(va))
-        if dist > max_r or float(np.dot(va, a_d[:2])) <= 0:
+        if dist > max_r or dist < min_range or float(np.dot(va, a_d[:2])) <= 0:
             return False
-        return abs(wrap(math.atan2(va[1], va[0]) - math.atan2(a_d[1], a_d[0]))) <= a_tol + math.atan2(0.5, dist)
+        # half a metre of slack for pose error, but never a cone so wide it stops meaning "on this bearing"
+        slack = min(math.atan2(0.5, dist), math.radians(float(cfg.get('anchor_slack_max_deg', 8.0))))
+        return abs(wrap(math.atan2(va[1], va[0]) - math.atan2(a_d[1], a_d[0]))) <= a_tol + slack
+
+    def _levels(r):
+        return loud + 20.0 * np.log10(np.maximum(r, 0.35))
+
+    def _loud_ok(r, sl):
+        return np.abs(_levels(r) - sl) <= spread
+
+    def _level_plausible(sl):
+        return abs(sl - ref) <= gate
+
+    # Two frogs on one bearing explain the bearings equally well; the one that would be about as loud as a frog wins.
+    # In units of the MSAC cost: a caller prior_sd away from nominal weighs as much as one bearing that does not fit.
+    prior_sd = float(cfg.get('loudness_prior_sd_db', 4.0))
+
+    def _level_cost(sl):
+        return 0.0 if sl is None else (tol * (sl - ref) / prior_sd) ** 2
 
     scored = []
     for i, j in zip(I, J):
@@ -543,11 +716,23 @@ def robust_triangulate(origins, dirs, anchor, cfg, rng_seed=0, groups=None):
         if not _on_anchor(x):
             continue
         ang, r = _angles_to(np.r_[x, 0.0], origins, dirs)
-        inl = _inlier_mask(ang, r, tol, max_r, groups)
+        lok = None
+        if loud is not None:
+            lv = _levels(r)[[i, j]]
+            if abs(lv[0] - lv[1]) > spread or not _level_plausible(float(lv.mean())):
+                continue   # these two bearings cannot be the same frog at their crossing
+            if anchor_loudness is not None and \
+                    abs(source_level_db(anchor_loudness, np.linalg.norm(x - a_o[:2])) - lv.mean()) > spread + 1.0:
+                continue
+            lok = _loud_ok(r, float(lv.mean()))
+        inl = _inlier_mask(ang, r, tol, max_r, groups, lok)
         # MSAC score: squared angle error, capped at the tolerance (lower is better). Unlike counting
         # inliers it prefers the point most bearings agree with tightly over one that many bearings
         # (including a neighbouring frog's) agree with loosely.
-        cost = float(np.sum(np.minimum(np.where(r <= max_r, ang, tol), tol) ** 2))
+        use = r <= max_r if lok is None else (r <= max_r) & lok
+        cost = float(np.sum(np.minimum(np.where(use, ang, tol), tol) ** 2))
+        if loud is not None:
+            cost += _level_cost(float(lv.mean()))
         if inl.sum() >= 2:
             scored.append((cost, x, inl))
     if not scored:
@@ -564,7 +749,7 @@ def robust_triangulate(origins, dirs, anchor, cfg, rng_seed=0, groups=None):
                 break
     best = None
     for _, x0, inl0 in seeds:
-        x, inl = x0, inl0
+        x, inl, lok, sl = x0, inl0, None, None
         ok = True
         for _ in range(3):   # refine on inliers (angular least squares), re-select inliers
             x = _refine_angular(_ls2d(origins[inl], dirs[inl]), origins[inl], dirs[inl])
@@ -572,47 +757,71 @@ def robust_triangulate(origins, dirs, anchor, cfg, rng_seed=0, groups=None):
                 ok = False
                 break
             ang, r = _angles_to(np.r_[x, 0.0], origins, dirs)
-            inl = _inlier_mask(ang, r, tol, max_r, groups)
+            if loud is not None:
+                sl = float(np.median(_levels(r)[inl]))
+                if not _level_plausible(sl):
+                    ok = False
+                    break
+                if anchor_loudness is not None and \
+                        abs(source_level_db(anchor_loudness, np.linalg.norm(x - a_o[:2])) - sl) > spread + 1.0:
+                    ok = False
+                    break
+                lok = _loud_ok(r, sl)
+            inl = _inlier_mask(ang, r, tol, max_r, groups, lok)
             if inl.sum() < 2:
                 ok = False
                 break
-        if not ok:
+        if not ok or len(_distinct_places(origins[inl])) < 2:
             continue
-        rcost = float(np.sum(np.minimum(np.where(r <= max_r, ang, tol), tol) ** 2))
+        use = r <= max_r if lok is None else (r <= max_r) & lok
+        rcost = float(np.sum(np.minimum(np.where(use, ang, tol), tol) ** 2)) + _level_cost(sl)
         if best is None or rcost < best[0]:
-            best = (rcost, x, inl, ang)
+            best = (rcost, x, inl, ang, sl)
     if best is None:
         return None
-    _, x, inl, ang = best
+    _, x, inl, ang, sl = best
     o_in, d_in = origins[inl], dirs[inl]
     hr = np.linalg.norm(x[None, :] - o_in[:, :2], axis=1)
     horiz = np.linalg.norm(d_in[:, :2], axis=1)
     z_rays = o_in[:, 2] + hr * d_in[:, 2] / np.maximum(horiz, 1e-6)
-    near = hr <= max(10.0, 1.5 * float(np.min(hr)))
+    # a nearly flat array measures elevation badly: only the nearest bearings say how high the frog sits
+    near = hr <= max(1.5 * float(np.min(hr)), float(np.sort(hr)[min(2, len(hr) - 1)]))
     z = float(np.median(z_rays[near]))
-    # distinct listening places among inliers
-    places = []
-    for o in o_in:
-        if all(math.hypot(o[0] - p[0], o[1] - p[1]) > 0.3 for p in places):
-            places.append(o)
+    places = _distinct_places(o_in)
+    which = [min(range(len(places)), key=lambda k: math.hypot(o[0] - places[k][0], o[1] - places[k][1])) for o in o_in]
+    per_place = [which.count(k) for k in range(len(places))]
+    level_sd = 0.0     # how differently loud (distance-corrected) the caller was at the places
+    if loud is not None and len(places) >= 2:
+        lv = _levels(np.linalg.norm(x[None, :] - origins[:, :2], axis=1))[inl]
+        level_sd = float(np.std([np.mean(lv[np.asarray(which) == k]) for k in range(len(places))]))
     base = max((math.hypot(a[0] - b[0], a[1] - b[1]) for a in places for b in places), default=0.0)
     par = 0.0
     for a in places:
         for b in places:
             ua = math.atan2(a[1] - x[1], a[0] - x[0])
             ub = math.atan2(b[1] - x[1], b[0] - x[0])
-            par = max(par, abs(math.degrees(wrap(ua - ub))))
+            d_ab = abs(math.degrees(wrap(ua - ub)))
+            # seen from exactly opposite sides the two bearings are the same line: no better than one place
+            par = max(par, min(d_ab, 180.0 - d_ab))
     rms = float(np.degrees(np.sqrt(np.mean(ang[inl] ** 2))))
-    mean_r = float(np.mean(hr))
     sigma = math.radians(max(rms, cfg['doa_sigma_deg']))
-    # along-range error of two bearings sigma apart seen with parallax `par` (deliberately conservative:
-    # no averaging credit, DOA errors of one listening place are correlated) plus optional pose sigma floor
     pose_sigma = float(cfg.get('pose_sigma_m', 0.05))
-    unc_ang = mean_r * sigma / max(math.sin(math.radians(min(par, 90.0))), math.sin(math.radians(3.0)))
-    unc = math.hypot(unc_ang, pose_sigma)
+    unc = math.hypot(fix_sigma_m(x, places, sigma, pose_sigma), pose_sigma)
     return {'pos': [float(x[0]), float(x[1]), z], 'inliers': int(inl.sum()), 'n_obs': int(n),
             'n_origins': len(places), 'baseline_m': round(base, 3), 'parallax_deg': round(par, 1),
-            'rms_deg': round(rms, 2), 'uncertainty_m': round(unc, 3), 'inlier_mask': inl}
+            'rms_deg': round(rms, 2), 'uncertainty_m': round(min(unc, 99.0), 3),
+            'source_level_db': None if sl is None else round(sl, 1), 'level_sd_db': round(level_sd, 2),
+            'rays_per_place': per_place,
+            'places': [(float(p[0]), float(p[1])) for p in places], 'inlier_mask': inl}
+
+
+def _distinct_places(origins, sep=0.3):
+    """Distinct listening places among ray origins (first of each cluster)."""
+    places = []
+    for o in origins:
+        if all(math.hypot(o[0] - p[0], o[1] - p[1]) > sep for p in places):
+            places.append(o)
+    return places
 
 
 def _intersect2d(o1, d1, o2, d2):
@@ -683,8 +892,8 @@ def vantage_candidates(frog_xyz, robot_xy, kind, grid, cfg, allow_unknown=False,
                                                      allow_unknown=allow_unknown):
                 continue
             los = True
-            if grid is not None and kind == 'ground':
-                los = not grid.line_blocked((vx, vy), (fx, fy), cfg['lethal_cost'],
+            if grid is not None and kind == 'ground':   # only real obstacles hide a frog, not the cost around them
+                los = not grid.line_blocked((vx, vy), (fx, fy), int(cfg.get('los_cost', cfg['lethal_cost'])),
                                             skip_start=cfg['clearance_m'], skip_end=cfg['los_skip_end_m'])
             yaw = math.atan2(fy - vy, fx - vx)
             terrain_w = float(cfg.get('terrain_cost_weight', 0.08))
@@ -846,8 +1055,19 @@ def path_terrain_cost(points, grid, slope_weight=3.0):
 EARTH_R = 6378137.0
 
 
+def parse_geo_ref(text):
+    """'lat,lon,map_x,map_y[,heading_deg]' of a point the operator surveyed before the mission -> tuple, '' -> None.
+    This is the only source of lat/lon: the robot itself works without GPS."""
+    if not text or not str(text).strip():
+        return None
+    v = [float(x) for x in str(text).split(',')]
+    if len(v) not in (4, 5):
+        raise ValueError("geo_ref must be 'lat,lon,map_x,map_y[,heading_deg]'")
+    return tuple(v) if len(v) == 5 else tuple(v) + (0.0,)
+
+
 def local_to_latlon(ref_lat, ref_lon, ref_xy, xy, heading_deg=0.0):
-    """Map point -> WGS84, from one reference pair (map xy where the GPS read ref_lat/lon).
+    """Map point -> WGS84, from one reference pair (a map xy whose lat/lon is known).
     Assumes map x = east, y = north rotated by heading_deg (0 in Gazebo ENU worlds). Good to cm over a
     few hundred metres."""
     dx, dy = xy[0] - ref_xy[0], xy[1] - ref_xy[1]

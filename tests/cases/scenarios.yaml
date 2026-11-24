@@ -38,6 +38,27 @@ smoke_tests:
       max_false_positives: 0
       require_return_home: true
 
+acoustic_tests:
+  # Recorded failure, 2026-11-24: 9 minutes, 0 of 6 frogs located, two phantoms saved (1.8 and 3.3 m from any frog, claimed
+  # +/-0.18 and +/-0.12 m), circling between a frog in tall grass and one in the open, photos of empty ground.
+  # Offline replay: tests/offline/test_acoustic_hunt.py on tests/cases/two_frog_phantoms_20261124.json.
+  # Live: run_nav_benchmark.sh --suite phantoms
+  - id: two_frog_phantoms_20261124
+    profile: forest
+    seed: 0
+    randomize: false
+    max_mission_sec: 540
+    spawn: [48.0, 2.1, 2.75, -3.13]
+    replay: tests/cases/two_frog_phantoms_20261124.json
+    origin: "coqui_surveys/survey_20261124_141751_bf3b"
+    expect:
+      min_frogs_matched: 2
+      max_false_positives: 0
+      max_mean_err_xy_m: 0.4
+      min_photos_with_frog: 1
+      max_localization_err_m: 0.6
+      gps_used: false
+
 slope_tests:
   - id: slope_test_1_upper_bank
     profile: hill

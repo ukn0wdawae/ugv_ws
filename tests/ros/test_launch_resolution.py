@@ -5,7 +5,7 @@ Verifies directly against the ROS 2 `launch` engine:
   1. `coqui_survey.launch.py localization:=slam` resolves cleanly (no InvalidConditionExpressionError!)
      and includes `rtabmap` + `ekf_node` + `imu_filter_madgwick_node`.
   2. `coqui_survey.launch.py rviz:=true` starts STRICTLY ONE `rviz2` node (no duplicate traversability_rviz!).
-  3. `coqui_survey.launch.py localization:=ekf` (default) and `localization:=perfect` both resolve cleanly.
+  3. `localization:=lidar` (default, GPS-denied), `:=ekf` and `:=perfect` all resolve cleanly.
   4. `use_sim_time:=false` propagates into the merged Nav2 and survey YAML files (not hard-coded true).
 """
 import importlib.util
@@ -84,12 +84,21 @@ def main():
     assert 'collision_monitor' in execs_slam
     assert rviz_count == 1, f'expected strictly 1 rviz2 window, got {rviz_count}: {execs_slam}'
 
-    # 2) localization:=ekf (default) + use_sim_time:=false (hardware mode)
+    # 1b) default localization = lidar: 3D EKF + wheel relay + scan matching, no static map->odom, no RTAB-Map, no GPS
+    nodes_lidar = _collect_nodes(mod.generate_launch_description(), {'profile': 'forest', 'rviz': 'false'})
+    execs_lidar = [n.node_executable for n in nodes_lidar]
+    for need in ('ekf_node', 'wheel_odom_relay', 'imu_filter_madgwick_node', 'lidar_localizer'):
+        assert execs_lidar.count(need) == 1, f'{need} must run exactly once in lidar mode: {execs_lidar}'
+    assert 'rtabmap' not in execs_lidar and 'static_transform_publisher' not in execs_lidar
+    assert not any('navsat' in (ex or '') or 'gps' in (ex or '') for ex in execs_lidar), 'the forest is GPS-denied'
+
+    # 2) localization:=ekf (dead reckoning) + use_sim_time:=false (hardware mode)
     nodes_ekf = _collect_nodes(mod.generate_launch_description(), {
         'profile': 'hill', 'localization': 'ekf', 'rviz': 'false', 'use_sim_time': 'false',
     })
     execs_ekf = [n.node_executable for n in nodes_ekf]
-    assert 'ekf_node' in execs_ekf and 'rtabmap' not in execs_ekf
+    assert 'ekf_node' in execs_ekf and 'rtabmap' not in execs_ekf and 'lidar_localizer' not in execs_ekf
+    assert 'wheel_odom_relay' in execs_ekf
     assert sum(1 for ex in execs_ekf if ex == 'rviz2') == 0
 
     # 3) localization:=perfect (GT ablation mode)
@@ -99,7 +108,7 @@ def main():
     execs_perf = [n.node_executable for n in nodes_perf]
     assert 'gt_odom_bridge' in execs_perf and 'ekf_node' not in execs_perf
 
-    print(f'PASS: launch resolution verified for slam ({len(nodes_slam)} nodes, 1 rviz), '
+    print(f'PASS: launch resolution verified for lidar ({len(nodes_lidar)} nodes), slam ({len(nodes_slam)} nodes, 1 rviz), '
           f'ekf ({len(nodes_ekf)} nodes), and perfect ({len(nodes_perf)} nodes)!')
 
 

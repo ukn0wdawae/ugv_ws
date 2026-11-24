@@ -17,7 +17,7 @@ NAV2_PARAMS=""
 BT_XML=""
 TRAV_PARAMS=""
 SUITE="smoke,slope"
-LOC="ekf"
+LOC="lidar"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

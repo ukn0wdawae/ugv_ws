@@ -1,61 +1,42 @@
-# Realistic local state estimation: fuses noisy wheel encoder odometry (/wheel/odom)
-# with Madgwick-filtered IMU orientation & angular velocity (/imu) -> /odom + odom->base_footprint TF.
-# Replaces Gazebo's ground-truth world odometry so navigation, traversability, and acoustic
-# triangulation face realistic pose drift and attitude noise.
+# Local state estimation without GPS: wheel odometry + IMU -> /odom + TF odom -> base_footprint, in full 3D.
+#
+# 3D, not two_d_mode: on this terrain the 2D filter integrated the gyro about the wrong axis (19 deg heading drift over one
+# mission, position 4.7 m off), and it pinned the robot to a flat plane, so RViz drew the terrain above it and every arrow
+# and sound ray below the ground. With attitude and height in the TF the robot sits on the terrain it measures.
+# Replay of one recorded mission (144 m): 2D mean 1.42 m / max 4.7 m, 3D mean 0.44 m / max 1.2 m. What is left is drift;
+# lidar_localizer (map -> odom) removes it (0.1 m).
 ekf_filter_node:
   ros__parameters:
     use_sim_time: true
-    frequency: 30.0
-    sensor_timeout: 0.25
-    two_d_mode: true
-    transform_time_offset: 0.0
-    transform_timeout: 0.0
-    print_diagnostics: false
+    frequency: 50.0
+    sensor_timeout: 0.1
+    two_d_mode: false
     publish_tf: true
     publish_acceleration: false
+    print_diagnostics: false
 
     map_frame: map
     odom_frame: odom
     base_link_frame: base_footprint
     world_frame: odom
 
-    # Wheel encoder odometry (libgazebo_ros_diff_drive odometry_source=0): fuse longitudinal vx only
-    # (6-wheel skid-steer wheel-encoder yaw rate has heavy lateral tire scrub error; gyro handles vyaw)
-    odom0: /wheel/odom
+    # Body velocity from wheel_odom_relay: vx measured, vy and vz ~ 0 (a wheeled robot does not fly or slide sideways)
+    odom0: /wheel/odom_3d
     odom0_config: [false, false, false,
                    false, false, false,
-                   true,  false, false,
+                   true,  true,  true,
                    false, false, false,
                    false, false, false]
-    odom0_differential: false
-    odom0_relative: false
-    odom0_queue_size: 10
+    odom0_queue_size: 20
 
-    # Madgwick-filtered IMU from noisy gyro + accel (/imu/raw -> /imu): fuse gyro yaw rate
+    # Madgwick attitude (roll, pitch; its yaw is free) and the gyro
     imu0: /imu
     imu0_config: [false, false, false,
+                  true,  true,  false,
                   false, false, false,
-                  false, false, false,
-                  false, false, true,
+                  true,  true,  true,
                   false, false, false]
     imu0_differential: false
     imu0_relative: false
+    imu0_queue_size: 40
     imu0_remove_gravitational_acceleration: true
-    imu0_queue_size: 20
-
-    # Moderate process noise reflecting skid-steer slip on off-road dirt/slopes
-    process_noise_covariance: [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.06, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.06, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.04, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.025,0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.04, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,
-                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.015]

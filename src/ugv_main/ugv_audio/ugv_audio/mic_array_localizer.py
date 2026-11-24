@@ -10,6 +10,12 @@ Processes raw 5-channel audio frames from `/ugv_audio/mic_array/audio_raw`:
   3. Multi-position 3D Ray-Intersection Least-Squares Triangulation in `map` frame
      using TF2 (`map` <- `audio_array_base_link`) to triangulate the Coqui frog's
      3D coordinates (x, y, z) and uncertainty radius.
+
+Every detected call is also published on `/ugv_audio/call` (std_msgs/String, JSON), which is what the survey uses:
+  t          capture time (s, ROS clock)      frame      frame of az / el (the array)
+  az, el     direction of arrival (rad)       snr_db     over the noise floor: says how audible the call is
+  level_db   received level, 0 dB = a nominal call 1 m away, -20 dB = 10 m: says roughly how far the frog is
+  coherence  0..1, share of the call that one direction explains; low = two frogs at once, bearing not usable
 """
 
 import json
@@ -28,17 +34,14 @@ import tf2_ros
 from .audio_core import (
     COQUI_MASK,
     FRAME_SAMPLES,
-    FREQS,
     MIC_POSITIONS_BODY,
-    NOISE_GUARD_MASK,
     SAMPLE_RATE,
-    SPEED_OF_SOUND,
+    call_band_level_db,
     compute_coqui_snr_db,
+    estimate_doa,
+    level_to_range_m,
     quat_to_rot_matrix,
 )
-
-# Reference RMS at 1m for a full Coqui call frame (used only for initial range prior before parallax)
-REF_RMS_AT_1M = 0.425
 
 
 class MicArrayLocalizerNode(Node):
@@ -76,24 +79,6 @@ class MicArrayLocalizerNode(Node):
         self.latest_odom_rot = np.eye(3, dtype=np.float64)
         self.create_subscription(Odometry, '/odom', self._odom_cb, 10)
 
-        # Harmonic-free dual-band Co/Qui passband (1060-1260 Hz & 1760-2260 Hz) and guard noise bands
-        self.coqui_mask = COQUI_MASK
-        self.noise_mask = NOISE_GUARD_MASK
-        self.coqui_freqs = FREQS[self.coqui_mask]  # shape (F,)
-
-        # Precompute coarse 3D spherical grid for SRP-PHAT:
-        # Azimuth: -180..+180 deg (72 steps = 5 deg), Elevation: -15..+65 deg (17 steps = 5 deg)
-        az_coarse = np.deg2rad(np.linspace(-180.0, 175.0, 72))
-        el_coarse = np.deg2rad(np.linspace(-15.0, 65.0, 17))
-        az_g, el_g = np.meshgrid(az_coarse, el_coarse, indexing='ij')
-        self.coarse_az = az_g.ravel()
-        self.coarse_el = el_g.ravel()
-        self.coarse_dirs = np.stack([
-            np.cos(self.coarse_el) * np.cos(self.coarse_az),
-            np.cos(self.coarse_el) * np.sin(self.coarse_az),
-            np.sin(self.coarse_el),
-        ], axis=1)  # (G, 3)
-
         # Stored acoustic bearing rays: list of dicts {'origin': np(3), 'dir': np(3), 'range_est': float, 'weight': float}
         self.rays = []
         self.triangulated_pos = None
@@ -109,6 +94,7 @@ class MicArrayLocalizerNode(Node):
 
         self.detected_pub = self.create_publisher(Bool, '/ugv_audio/sound_detected', 10)
         self.doa_pub = self.create_publisher(Vector3Stamped, '/ugv_audio/doa_bearing', 10)
+        self.call_pub = self.create_publisher(String, '/ugv_audio/call', 50)
         self.frog_pt_pub = self.create_publisher(PointStamped, '/ugv_audio/triangulated_frog', 10)
         self.status_pub = self.create_publisher(String, '/ugv_audio/triangulation_status', 10)
         self.marker_pub = self.create_publisher(MarkerArray, '/ugv_audio/triangulation_markers', 10)
@@ -149,56 +135,6 @@ class MicArrayLocalizerNode(Node):
             except Exception:
                 pass
         return self.latest_odom_pos.copy(), self.latest_odom_rot.copy()
-
-    def _estimate_doa_srp_phat(self, spec_coqui: np.ndarray):
-        """Estimate (azimuth_rad, elevation_rad, unit_dir_body) via coarse-to-fine 3D SRP-PHAT.
-
-        spec_coqui: complex array of shape (5, F) in the Coqui passband.
-        """
-        # Phase-transform weighting (preserve spectral magnitude weight to emphasize strong Co/Qui harmonics)
-        mag = np.abs(spec_coqui)
-        phat_spec = spec_coqui / np.maximum(mag ** 0.7, 1e-9)  # (5, F)
-
-        # 1. Coarse grid search
-        # proj: (G, 5) = coarse_dirs (G, 3) @ MIC_POSITIONS_BODY.T (3, 5)
-        proj = self.coarse_dirs @ MIC_POSITIONS_BODY.T  # (G, 5)
-        # Steering phase: exp(-j * 2*pi * f * (m_i . u) / c)
-        # Evaluate on subset of strongest 40 frequency bins for fast vectorized search
-        mean_mag = np.mean(mag, axis=0)
-        top_idx = np.argsort(mean_mag)[-40:]
-        freqs_sub = self.coqui_freqs[top_idx]  # (K,)
-        spec_sub = phat_spec[:, top_idx]       # (5, K)
-
-        phase_arg = (-2.0 * np.pi / SPEED_OF_SOUND) * proj[:, :, None] * freqs_sub[None, None, :]  # (G, 5, K)
-        steered = np.sum( np.exp(1j * phase_arg) * spec_sub[None, :, :], axis=1 )  # (G, K)
-        power = np.sum(np.abs(steered) ** 2, axis=1)  # (G,)
-
-        best_idx = int(np.argmax(power))
-        az0 = float(self.coarse_az[best_idx])
-        el0 = float(self.coarse_el[best_idx])
-
-        # 2. Fine grid refinement (+/- 6 deg in 0.5 deg steps) around (az0, el0)
-        az_fine = az0 + np.deg2rad(np.linspace(-6.0, 6.0, 25))
-        el_fine = np.clip(el0 + np.deg2rad(np.linspace(-6.0, 6.0, 25)), np.deg2rad(-25.0), np.deg2rad(75.0))
-        az_fg, el_fg = np.meshgrid(az_fine, el_fine, indexing='ij')
-        az_f = az_fg.ravel()
-        el_f = el_fg.ravel()
-        fine_dirs = np.stack([
-            np.cos(el_f) * np.cos(az_f),
-            np.cos(el_f) * np.sin(az_f),
-            np.sin(el_f),
-        ], axis=1)
-
-        proj_f = fine_dirs @ MIC_POSITIONS_BODY.T
-        phase_arg_f = (-2.0 * np.pi / SPEED_OF_SOUND) * proj_f[:, :, None] * freqs_sub[None, None, :]
-        steered_f = np.sum(np.exp(1j * phase_arg_f) * spec_sub[None, :, :], axis=1)
-        power_f = np.sum(np.abs(steered_f) ** 2, axis=1)
-
-        best_f = int(np.argmax(power_f))
-        az_best = math.atan2(math.sin(float(az_f[best_f])), math.cos(float(az_f[best_f])))
-        el_best = float(el_f[best_f])
-        u_body = fine_dirs[best_f] / np.linalg.norm(fine_dirs[best_f])
-        return az_best, el_best, u_body
 
     def _solve_3d_triangulation(self):
         """Solve weighted 3D ray-intersection least squares + range prior regularization."""
@@ -261,7 +197,7 @@ class MicArrayLocalizerNode(Node):
         signals = data.reshape((num_mics, FRAME_SAMPLES))
 
         # 1. Harmonic-free, motor-noise-resilient spectral SNR & Coqui call detection
-        snr_db, specs, _power_spec = compute_coqui_snr_db(signals, SAMPLE_RATE)
+        snr_db, specs, power_spec = compute_coqui_snr_db(signals, SAMPLE_RATE)
 
         is_detected = snr_db >= self.snr_threshold_db
         det_msg = Bool()
@@ -272,8 +208,9 @@ class MicArrayLocalizerNode(Node):
             return
 
         # 2. Estimate 3D Direction of Arrival (DOA) in `audio_array_base_link`
-        spec_coqui = specs[:, self.coqui_mask]
-        az_rad, el_rad, u_body = self._estimate_doa_srp_phat(spec_coqui)
+        spec_coqui = specs[:, COQUI_MASK]
+        az_rad, el_rad, u_body, coherence = estimate_doa(spec_coqui)
+        level_db = call_band_level_db(specs, power_spec)
 
         now_msg = self.get_clock().now().to_msg()
         doa_msg = Vector3Stamped()
@@ -283,18 +220,19 @@ class MicArrayLocalizerNode(Node):
         doa_msg.vector.y = float(el_rad)
         doa_msg.vector.z = float(snr_db)
         self.doa_pub.publish(doa_msg)
+        call = String()
+        call.data = json.dumps({
+            't': now_msg.sec + now_msg.nanosec * 1e-9, 'frame': self.array_frame,
+            'az': round(az_rad, 4), 'el': round(el_rad, 4), 'snr_db': round(snr_db, 2),
+            'level_db': round(level_db, 2), 'coherence': round(coherence, 3)})
+        self.call_pub.publish(call)
 
         # 3. Transform DOA ray into `map` frame and update 3D triangulation
         origin_map, rot_map = self._get_array_pose_in_map()
         dir_map = rot_map @ u_body
         dir_map = dir_map / np.linalg.norm(dir_map)
 
-        # Bandpass time-domain RMS for initial range prior
-        bp_spec = np.zeros_like(specs)
-        bp_spec[:, self.coqui_mask] = specs[:, self.coqui_mask]
-        bp_sig = np.fft.irfft(bp_spec, n=FRAME_SAMPLES, axis=1)
-        rms_bp = float(np.sqrt(np.mean(bp_sig ** 2)))
-        range_est = float(np.clip(REF_RMS_AT_1M / max(rms_bp, 1e-4), 0.5, 18.0))
+        range_est = float(np.clip(level_to_range_m(level_db), 0.5, 25.0))   # prior until there is parallax
 
         if self.ray_gate > 0.0 and self.rays:
             if self.triangulated_pos is not None:

@@ -2,16 +2,17 @@
 microphone array, pan-tilt camera, and the survey mission.
 
     ros2 launch ugv_coqui_behavior coqui_survey.launch.py [profile:=forest|hill]
-         [localization:=ekf|slam|perfect] [use_sim_time:=true|false]
+         [localization:=lidar|ekf|slam|perfect] [use_sim_time:=true|false]
          [collision_monitor:=true|false] [rviz:=true|false]
          [nav2_params_file:=/path/to/custom_nav2.yaml] [bt_xml:=/path/to/custom_bt.xml]
          [traversability_params:=/path/to/custom_trav.yaml]
          [run_id:=...] [resume_survey:=/path/to/survey.yaml] [sim:=true gui:=true]
 
-localization
-  ekf      (default) Wheel encoder odometry (/wheel/odom) + Madgwick-filtered noisy IMU (/imu)
-           fused by robot_localization EKF -> /odom + odom->base_footprint, plus static map->odom.
-  slam     Same EKF odometry + RTAB-Map 3D lidar SLAM publishing map->odom (what the real robot needs).
+localization (the forest is GPS-denied: no mode uses a GPS)
+  lidar    (default) 3D EKF of wheel odometry + IMU (odom -> base_footprint, full 3D) and lidar_localizer, which matches
+           trunks and bushes in the 3D lidar with what it has seen before (map -> odom). Accurate to ~0.1 m.
+  ekf      The same EKF alone with a fixed map -> odom: dead reckoning, drifts about 1 m per 150 m. For comparison.
+  slam     The same EKF + RTAB-Map 3D lidar SLAM publishing map -> odom.
   perfect  Simulation ablation mode: ground-truth /ugv_gt_odom -> /odom + identity map->odom.
 
 Parameters are layered: config/survey_base.yaml + config/nav2_survey_base.yaml (or `nav2_params_file`),
@@ -196,13 +197,13 @@ def setup(context):
             PythonLaunchDescriptionSource(os.path.join(me, 'launch', 'coqui_survey_sim.launch.py')),
             launch_arguments={'profile': lc('profile'), 'gui': lc('gui'), 'follow': lc('follow'),
                               'show_truth': lc('show_truth'), 'seed': lc('seed'),
-                              'randomize': lc('randomize'),
+                              'randomize': lc('randomize'), 'schedule': lc('schedule'),
                               'x': lc('x'), 'y': lc('y'), 'z': lc('z'), 'yaw': lc('yaw')}.items()))
 
     loc = lc('localization').strip().lower()
-    if loc in ('ekf', 'slam'):
-        # Realistic state estimation: Madgwick AHRS on noisy /imu/raw -> /imu,
-        # fused with encoder /wheel/odom in robot_localization EKF -> /odom + odom->base_footprint
+    if loc in ('lidar', 'ekf', 'slam'):
+        # Realistic state estimation: Madgwick AHRS on noisy /imu/raw -> /imu, fused with the wheels
+        # (wheel_odom_relay) in a 3D robot_localization EKF -> /odom + odom->base_footprint
         acts += [
             Node(
                 package='imu_filter_madgwick',
@@ -213,6 +214,13 @@ def setup(context):
                 remappings=[('imu/data_raw', '/imu/raw'), ('imu/data', '/imu')],
             ),
             Node(
+                package='ugv_coqui_behavior',
+                executable='wheel_odom_relay',
+                name='wheel_odom_relay',
+                output='screen',
+                parameters=[{'use_sim_time': use_sim_time_bool}],
+            ),
+            Node(
                 package='robot_localization',
                 executable='ekf_node',
                 name='ekf_filter_node',
@@ -221,17 +229,19 @@ def setup(context):
                 remappings=[('odometry/filtered', '/odom')],
             ),
         ]
-        if loc == 'ekf':
-            ip = profile.get('initial_pose', [0.0, 0.0, 0.0, 0.0])
-            ix = lc('init_x') or lc('x') or str(ip[0])
-            iy = lc('init_y') or lc('y') or str(ip[1])
-            iz = lc('init_z') or lc('z') or str(ip[2])
-            iyaw = lc('init_yaw') or lc('yaw') or str(ip[3])
+        ip = profile.get('initial_pose', [0.0, 0.0, 0.0, 0.0])
+        start = [lc(f'init_{k}') or lc(k) or str(v) for k, v in zip(('x', 'y', 'z', 'yaw'), ip)]
+        if loc == 'lidar':
+            acts.append(Node(
+                package='ugv_coqui_behavior', executable='lidar_localizer', name='lidar_localizer', output='screen',
+                parameters=[{'use_sim_time': use_sim_time_bool, 'initial_pose': [float(v) for v in start]}],
+            ))
+        elif loc == 'ekf':
             acts.append(Node(
                 package='tf2_ros', executable='static_transform_publisher', name='map_to_odom_identity',
                 arguments=[
-                    '--x', ix, '--y', iy, '--z', iz,
-                    '--yaw', iyaw, '--pitch', '0', '--roll', '0',
+                    '--x', start[0], '--y', start[1], '--z', start[2],
+                    '--yaw', start[3], '--pitch', '0', '--roll', '0',
                     '--frame-id', 'map', '--child-frame-id', 'odom',
                 ],
                 parameters=[{'use_sim_time': use_sim_time_bool}],
@@ -261,7 +271,7 @@ def setup(context):
             ),
         ]
     else:
-        raise RuntimeError(f'localization must be ekf, slam, or perfect, not {loc!r}')
+        raise RuntimeError(f'localization must be lidar, ekf, slam, or perfect, not {loc!r}')
 
     trav_share = get_package_share_directory('ugv_traversability')
     trav_yaml = lc('traversability_params').strip() or os.path.join(trav_share, 'config', 'traversability.yaml')
@@ -297,8 +307,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('profile', default_value='forest',
                               description='profile name in config/profiles/ or a path to a profile yaml'),
-        DeclareLaunchArgument('localization', default_value='ekf',
-                              description='ekf (encoder+IMU EKF) | slam (EKF+RTAB-Map 3D) | perfect (GT ablation)'),
+        DeclareLaunchArgument('localization', default_value='lidar',
+                              description='lidar (EKF + scan matching) | ekf (dead reckoning) | slam (EKF + RTAB-Map 3D) '
+                                          '| perfect (GT ablation)'),
         DeclareLaunchArgument('use_sim_time', default_value='true',
                               description='true in Gazebo simulation, false on real robot hardware'),
         DeclareLaunchArgument('collision_monitor', default_value='true',
@@ -325,6 +336,8 @@ def generate_launch_description():
         DeclareLaunchArgument('seed', default_value='0'),
         DeclareLaunchArgument('randomize', default_value='false',
                               description='sim:=true only: randomize frog positions and spawn pose from seed'),
+        DeclareLaunchArgument('schedule', default_value='chorus',
+                              description='sim:=true only: chorus (every frog on its own rhythm) | turns'),
         DeclareLaunchArgument('mission', default_value='true',
                               description='false: everything but the survey mission (drive with teleop / Nav2 goals)'),
         DeclareLaunchArgument('x', default_value='', description='override spawn pose when sim:=true'),

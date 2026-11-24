@@ -271,3 +271,10 @@ class RollingCostGrid:
         blended = np.where(cur >= 0, cur.astype(np.float32) + self.alpha * (mean_v - cur.astype(np.float32)), mean_v)
         dv[uniq] = np.clip(np.round(blended), 0, self.max_cost).astype(np.int8)
         return len(uniq)
+
+
+def height_shift(T_fr, T_tf, odom_2d):
+    """How much lower the published terrain must be than the internal map, so that it fits the TF the viewer and Nav2 see.
+    With 3D odometry the map keeps its own (drift-free) height and the difference is the odometry's drift. With 2D odometry
+    (flat TF) there is no height in the TF to fit; the map is published as it is."""
+    return 0.0 if odom_2d else float(T_fr[2, 3] - T_tf[2, 3])

@@ -6,9 +6,9 @@
 #   ./docker/run_coqui_survey_trial.sh [run_id] [seed] [max_mission_sec] [localization] [profile] [randomize] [extra launch args...]
 #
 # Examples:
-#   ./docker/run_coqui_survey_trial.sh smoke_ekf 0 600 ekf forest false
-#   ./docker/run_coqui_survey_trial.sh rand_s3 3 2400 ekf forest true
-#   ./docker/run_coqui_survey_trial.sh custom_nav 0 1200 ekf hill false nav2_params_file:=/path/to/my_nav2.yaml
+#   ./docker/run_coqui_survey_trial.sh smoke1 0 600 lidar forest false
+#   ./docker/run_coqui_survey_trial.sh rand_s3 3 2400 lidar forest true
+#   ./docker/run_coqui_survey_trial.sh custom_nav 0 1200 lidar hill false nav2_params_file:=/path/to/my_nav2.yaml
 #
 # Output: /root/ugv_ws/coqui_surveys/<run_id>/ (survey.yaml, frogs.geojson, photos/, events.jsonl,
 #         launch.log, grade.json, truth_used.yaml)
@@ -16,7 +16,7 @@ set -eo pipefail
 RUN=${1:-trial_$(date +%H%M%S)}
 SEED=${2:-0}
 MAXSEC=${3:-2400}
-LOC=${4:-ekf}
+LOC=${4:-lidar}
 PROFILE=${5:-forest}
 RANDOMIZE=${6:-false}
 shift $(( $# > 6 ? 6 : $# ))
@@ -42,6 +42,20 @@ if [ "$RANDOMIZE" = "true" ] && [ "$SEED" != "0" ]; then
   TRUTH_OUT="$OUT/truth_used.yaml"
   TRUTH_ARGS+=(randomize:=true "truth_out:=$TRUTH_OUT")
   GRADE_TRUTH_ARGS=(--truth "$TRUTH_OUT")
+  # The randomized spawn is where the operator puts the robot down: tell the robot that, not the profile's trailhead
+  # (otherwise its whole map, and every frog in it, is shifted by the difference).
+  TRUTH_ARGS+=($(python3 - "$PROFILE" "$SEED" <<'PY'
+import os, sys, yaml
+from ament_index_python.packages import get_package_share_directory as share
+from ugv_audio.audio_core import randomize_truth_scenario
+profile, seed = sys.argv[1], int(sys.argv[2])
+truth = yaml.safe_load(open(os.path.join(share('ugv_audio'), 'config', 'sim_truth', f'{profile}_survey.yaml')))
+prof = yaml.safe_load(open(os.path.join(share('ugv_coqui_behavior'), 'config', 'profiles', f'{profile}.yaml')))
+area = prof['survey']['coqui_survey']['ros__parameters']['survey_area']
+s = randomize_truth_scenario(truth, seed, survey_area=area)['spawn']
+print(f'init_x:={s[0]} init_y:={s[1]} init_yaw:={s[3]}')
+PY
+))
 fi
 
 echo "trial $RUN profile=$PROFILE seed=$SEED randomize=$RANDOMIZE max=${MAXSEC}s localization=$LOC domain=$ROS_DOMAIN_ID"

@@ -219,3 +219,28 @@ def test_station_status_agrees_with_the_planner():
     status = sv.station_status(cells, listened, 7.0, [], 1.0)
     assert {(x, y) for x, y, s in status if s == 'open'} == offered
     assert {s for _, _, s in status} == {'open', 'covered'}
+
+
+# ------------------------------------------------------------------------------- paths on the terrain
+def test_terrain_heights_keep_the_newest_surface():
+    from ugv_coqui_behavior.survey_viz import TerrainHeights
+    t = TerrainHeights(cell=0.2)
+    t.add([[1.05, 2.05, 2.0], [1.06, 2.06, 2.1], [float('nan'), 0, 0]])
+    assert t.at(1.1, 2.1) == 2.1                 # the highest point of a cell
+    t.add([[1.1, 2.1, 1.7]])
+    assert t.at(1.1, 2.1) == 1.7                 # re-measured
+    assert t.at(1.25, 2.1) == 1.7                # neighbour
+    assert t.at(5.0, 5.0) is None and t.at(5.0, 5.0, default=3.0) == 3.0
+
+
+def test_paths_follow_the_terrain_not_the_robot_plane():
+    """Regression (2026-11-24): paths and arrows were drawn on a flat plane and vanished under the terrain."""
+    from ugv_coqui_behavior.survey_viz import TerrainHeights, lay_path
+    t = TerrainHeights()
+    xs = [0.1 * k for k in range(40)]
+    t.add([[x, 0.0, 0.3 * x] for x in xs[:30]])   # a ramp; the last metre was not seen
+    z = lay_path([(x, 0.0) for x in xs], t, fallback_z=0.0, lift=0.05)
+    assert all(zz >= 0.3 * x for zz, x in zip(z[:29], xs[:29])), 'path under the ground'
+    assert all(zz <= 0.3 * x + 0.15 for zz, x in zip(z[:29], xs[:29]))
+    assert z[31] > 0.8                            # a short unseen gap keeps the last height
+    assert abs(lay_path([(50.0, 50.0)], t, fallback_z=2.6, lift=0.05)[0] - 2.65) < 1e-9

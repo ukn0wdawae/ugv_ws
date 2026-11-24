@@ -13,6 +13,10 @@ coqui_survey:
     min_frontier_cells: 4         # ignore tiny 1-3 cell unknown speckles
     frontier_min_dist_m: 1.5      # ignore frontiers already inside immediate sensor radius
     frontier_handoff_m: 2.0       # preemptively switch to the next frontier before slowing down
+    frontier_commit_m: 2.5        # drive at least this far, or frontier_commit_sec, toward a frontier before leaving it
+    frontier_commit_sec: 8.0      # just because it has been seen (was: a new goal about every second)
+    frontier_commit_bonus_m: 3.0  # frontiers near the one being driven to score this much better
+    explore_listen_every_m: 8.0   # stop and listen after this much driving: only standing bearings give positions
     frontier_size_weight: 0.15    # reward bigger unexplored openings
     frontier_heading_penalty_m: 3.5  # strongly prefer sweeping forward rather than bouncing back and forth
     whisper_bias_m: 5.0           # pull frontier exploration toward faint Tier-1 frog bearings
@@ -34,10 +38,20 @@ coqui_survey:
     terrain_cost_weight: 0.08     # penalize steep-slope vantages/frontiers so easy low-slope ground wins
     path_slope_weight: 3.0        # weight Nav2 path cost by cell slope cost when ranking reachable goals
     # --- detection / two-tier acoustic tracking & triangulation
-    min_detection_snr_db: 7.0     # Tier 1: passively bank rays + bias frontier exploration (out to ~22 m)
-    hunt_trigger_snr_db: 12.0     # Tier 2: loud/clear call (~<10 m) interrupts explore to lock on
-    passive_window_sec: 120.0     # keep passive bearings for 2 min to seed hunts & cross-triangulate quiet frogs
-    detections_to_trigger: 2      # consistent loud bearings within 4 s before starting a hunt
+    min_detection_snr_db: 7.0     # quieter than this over the noise floor is not a call
+    min_coherence: 0.85           # share of a call one direction explains; lower = two frogs at once, no position from it
+    # Loudness is the received call level, 0 dB = a nominal call heard 1 m away (mic_array_localizer, /ugv_audio/call).
+    # It says roughly how far a frog is, and tells two frogs on one bearing apart. CALIBRATE ON HARDWARE.
+    loudness_ref_db: 0.0          # a nominal caller at 1 m
+    loudness_gate_db: 10.0        # a caller this much louder / quieter than nominal is not believed
+    loudness_prior_sd_db: 4.0     # of two frogs on one bearing, the one nearer to nominal loudness is preferred
+    loudness_spread_db: 6.0       # calls of one frog, corrected for distance, stay within this of each other
+    hunt_trigger_range_m: 12.0    # Tier 2: a call that sounds nearer than this interrupts exploring
+    moving_tf_max_age_s: 0.5      # while driving, use the newest pose up to this old for a call (it only triggers a stop)
+    anchor_wait_sec: 25.0         # after stopping for a call heard on the move: wait this long to hear it standing
+    anchor_listen_sec: 5.0        # ... and at least this long, then take the call that fits best
+    passive_window_sec: 600.0     # keep standing bearings this long to seed hunts and locate quiet frogs
+    detections_to_trigger: 2      # consistent near bearings within 6 s before starting a hunt
     known_frog_radius_m: 2.0      # a triangulated estimate this close to a recorded frog is that frog
     known_bearing_radius_m: 1.1   # tighter radius for masking incoming bearings (avoids +-30 deg blind cones)
     frog_keepout_m: 0.9           # never plan goals closer than this to an already-recorded frog
@@ -45,9 +59,10 @@ coqui_survey:
     stationary_max_vx: 0.05       # m/s threshold for stationary bearing acceptance
     stationary_max_wz: 0.12       # rad/s threshold for stationary bearing acceptance
     stationary_hold_sec: 0.25     # must stay still this long before bearing counts as stationary
-    hunt_listen_sec: 4.0          # max listen time per hunt step (exits early once hunt_min_new_rays arrive)
-    hunt_min_new_rays: 2
-    quiet_step_limit_sec: 20.0    # stop wasting baseline steps if frog stops calling mid-hunt
+    hunt_listen_max_sec: 45.0     # wait this long for the TARGET's calls at a place (frogs pause 10-40 s)
+    hunt_min_new_rays: 3          # calls of the target from a place before moving on. Other frogs' calls do not count
+    min_step_separation_m: 0.7    # never listen twice within this of a place of the same hunt
+    group_link_deg: 3.0           # bearings from one place chained within this are one frog
     partial_min_parallax_deg: 12.0
     reject_empty_open_photo: true # reject open-ground clear-LOS fixes when camera sees no frog
     pose_sigma_m: 0.08            # honest pose uncertainty floor added to triangulation uncertainty
@@ -66,19 +81,27 @@ coqui_survey:
     min_baseline_m: 1.0
     min_parallax_deg: 15.0        # angle the listening places subtend at the frog
     min_places: 3                 # distinct listening places among the agreeing bearings
+    min_rays_per_place: 2         # a place only counts when the frog was heard there this often (stray bearings line up)
+    max_level_sd_db: 3.0          # the caller must sound equally loud (distance-corrected) from all of them
     max_uncertainty_m: 0.6
     # Bearing accuracy of the array. Measured in simulation (stationary, < 11 m): sd 0.3-1.0 deg, so a
     # 2 deg window. A neighbouring frog a few degrees off must fall outside it. RE-MEASURE ON HARDWARE
-    # (log /ugv_audio/doa_bearing at known spots) and set these to ~2x the measured sd.
+    # (log /ugv_audio/call at known spots) and set these to ~2x the measured sd.
     ray_inlier_deg: 2.0
     anchor_tol_deg: 6.0
+    anchor_slack_max_deg: 8.0     # extra room for pose error when the fix is close to where the hunt started
+    min_fix_range_m: 0.6          # a fix nearer than this to a listening place is two bearings crossing under the robot
     max_range_m: 25.0
     doa_sigma_deg: 1.0
     bout_gap_s: 1.2               # silence that separates calling bouts (one bout = one frog)
-    nominal_range_m: 6.0          # assumed range before a second listening place exists
-    no_call_timeout_sec: 90.0
+    nominal_range_max_m: 12.0     # assumed range (from loudness) before a second listening place exists is at most this
     hunt_timeout_sec: 420.0
     suppress_bearing_sec: 180.0
+    # frogs heard but not located: come back instead of forgetting them (or recording a guess)
+    lead_max_attempts: 3
+    lead_retry_sec: 120.0
+    lead_detour_m: 8.0            # a lead this close is revisited while exploring; the others before going home
+    lead_listen_sec: 25.0
     # --- viewpoint + camera
     standoff_ground_m: 1.4
     standoff_elevated_m: 2.2
@@ -86,9 +109,14 @@ coqui_survey:
     vantage_angles: 16
     vantage_extra_radii_m: [0.0, 0.5, 1.0, 2.0]
     los_skip_end_m: 0.5
+    los_cost: 99                  # only real obstacles block the view, not the inflated cost around them
     no_los_penalty: 10.0
     extra_radius_penalty: 1.0
     camera_settle_sec: 2.0
+    still_wait_sec: 4.0           # Nav2 says "reached" while the robot still turns: wait this long for it to stand
+    aim_tolerance_deg: 6.0        # re-aim when the camera ends up further off than this (a tilted robot: a few degrees)
+    vantage_listen_sec: 8.0       # listen at the viewpoint before the photo: a bearing from 2 m is worth centimetres
+    vantage_confirm_sec: 45.0     # a frog neither seen nor heard there: wait out the longest pause, then it is not there
     camera_scan_offsets: [0.0, 0.0, 0.15, 0.0, -0.15, 0.0, 0.0, 0.12, 0.0, -0.12]
     image_topic: /pt_camera/image_raw
     camera_info_topic: /pt_camera/camera_info
@@ -98,6 +126,7 @@ coqui_survey:
     home_tolerance_m: 1.2
     home_max_stages: 20
     output_dir: /root/ugv_ws/coqui_surveys
+    geo_ref: ''                   # GPS-denied: '' = no lat/lon. Or a surveyed point 'lat,lon,map_x,map_y,heading_deg'
     nav_goal_timeout_sec: 90.0
     plan_check_max: 4
     global_frame: map

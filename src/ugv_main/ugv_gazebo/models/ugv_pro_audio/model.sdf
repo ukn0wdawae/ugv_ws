@@ -572,9 +572,11 @@
             <height>240</height>
             <format>R8G8B8</format>
           </image>
+          <!-- far = the 3D lidar's max range. Gazebo renders both with one scene manager and the camera's far clip leaks
+               into about 1 in 20 gpu_ray scans: with 5 m, beams read a fake wall at 4.75 m. -->
           <clip>
             <near>0.05</near>
-            <far>5.0</far>
+            <far>30.0</far>
           </clip>
           <noise>
             <type>gaussian</type>

@@ -3,12 +3,12 @@
 # historical scenarios (smoke, slope, hill, forest, drive_trials, slope_physics, hill_terrain).
 #
 # Run inside the Docker container (./docker/shell.sh) from ugv_ws root:
-#   ./tests/sim/run_nav_benchmark.sh --suite smoke,slope --localization ekf
+#   ./tests/sim/run_nav_benchmark.sh --suite smoke,slope --localization lidar
 #   ./tests/sim/run_nav_benchmark.sh --suite all --nav2-params /path/to/new_nav2.yaml --bt-xml /path/to/new_bt.xml
 set -eo pipefail
 WS_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SUITE="smoke,slope"
-LOC="ekf"
+LOC="lidar"
 NAV2_PARAMS=""
 BT_XML=""
 TRAV_PARAMS=""
@@ -62,6 +62,11 @@ for part in "${PARTS[@]}"; do
     forest)
       run_trial full6_forest forest 0 2400 false
       ;;
+    phantoms)
+      # the mission of 2026-11-24 (two_frog_phantoms_20261124): circled, saved two frogs that do not exist
+      run_trial two_frog_phantoms_forest forest 0 540 false
+      run_trial two_frog_phantoms_turns forest 0 540 false schedule:=turns
+      ;;
     drive_trials)
       "$WS_ROOT/tests/sim/run_drive_trials.sh" "$OUT_BASE/drive_trials"
       ;;
@@ -79,7 +84,7 @@ for part in "${PARTS[@]}"; do
         ${TRAV_PARAMS:+--traversability-params "$TRAV_PARAMS"}
       exit 0
       ;;
-    *) echo "Unknown suite part: $part (use smoke,slope,hill,forest,drive_trials,slope_physics,hill_terrain,all)"; exit 2 ;;
+    *) echo "Unknown suite part: $part (use smoke,slope,hill,forest,phantoms,drive_trials,slope_physics,hill_terrain,all)"; exit 2 ;;
   esac
 done
 

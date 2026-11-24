@@ -40,8 +40,9 @@ from .audio_core import (
     FRAME_SAMPLES,
     MIC_POSITIONS_BODY,
     SAMPLE_RATE,
-    SPEED_OF_SOUND,
-    fractional_delay_fft,
+    CallVariation,
+    ChorusSchedule,
+    make_mic_error,
     propagate_sources_to_array,
     quat_to_rot_matrix,
     synthesize_coqui_call_frame,
@@ -79,22 +80,27 @@ class CoquiSoundEmitterNode(Node):
         self.declare_parameter('noise_std', 0.008)
         # mode 'legacy' : compact coqui worlds + coqui_hunter_node (robot locks/marks frogs, frog hints
         #                 published on /coqui/active_frog_info).
-        # mode 'survey' : frogs from `truth_file`, calling in bouts on their own schedule. The emitter
+        # mode 'survey' : frogs from `truth_file`, calling on their own schedule. The emitter
         #                 ignores the robot and publishes nothing but audio (no hints / answer key), plus,
         #                 only with publish_truth_markers, a viewer-only truth layer on /sim/coqui_truth_markers.
         self.declare_parameter('mode', 'legacy')
         self.declare_parameter('truth_file', '')
+        # schedule 'chorus': every frog calls on its own rhythm (real coquis); 'turns': one frog at a time
+        self.declare_parameter('schedule', 'chorus')
         self.declare_parameter('bout_calls_min', 10)
         self.declare_parameter('bout_calls_max', 18)
         self.declare_parameter('bout_gap_sec', 2.0)
         self.declare_parameter('seed', 0)
         self.declare_parameter('publish_truth_markers', False)
         # Realism parameters: motor self-noise, overlapping chorus calls, multipath echo, ambient insects
-        self.declare_parameter('motor_noise_gain', 0.025)
+        self.declare_parameter('motor_noise_gain', 0.06)
         self.declare_parameter('overlap_prob', 0.25)
         self.declare_parameter('echo_gain', 0.12)
         self.declare_parameter('echo_delay_ms', 18.0)
         self.declare_parameter('ambient_clutter_prob', 0.20)
+        self.declare_parameter('call_variation', True)     # per-frog / per-call level, foliage per metre, one-sided cover
+        self.declare_parameter('mic_pos_sigma_m', 0.0015)  # microphone placement error of this robot (0: ideal array)
+        self.declare_parameter('mic_gain_sigma_db', 0.7)
 
         self.env_name = self.get_parameter('env').value.strip().lower()
         self.call_period = float(self.get_parameter('call_period_sec').value)
@@ -112,7 +118,11 @@ class CoquiSoundEmitterNode(Node):
         self.echo_gain = float(self.get_parameter('echo_gain').value)
         self.echo_delay_ms = float(self.get_parameter('echo_delay_ms').value)
         self.ambient_clutter_prob = float(self.get_parameter('ambient_clutter_prob').value)
-        self.rng = np.random.default_rng(int(self.get_parameter('seed').value))
+        seed = int(self.get_parameter('seed').value)
+        self.rng = np.random.default_rng(seed)
+        self.chorus = None
+        self.variation = None
+        self.mic_error = None
         self.robot_speed = 0.0
         self.robot_wz = 0.0
 
@@ -130,6 +140,16 @@ class CoquiSoundEmitterNode(Node):
                            'habitat': str(fr.get('habitat', '')).split('(')[0].strip()[:30].rstrip()}
                           for fr in truth['frogs']]
             self.env_name = truth.get('world', 'survey')
+            n = len(self.frogs)
+            if str(self.get_parameter('schedule').value).strip().lower() == 'chorus':
+                self.chorus = ChorusSchedule(n, np.random.default_rng([seed, 1]), overlap_prob=self.overlap_prob,
+                                             start_sec=self.start_delay)
+            if bool(self.get_parameter('call_variation').value):
+                self.variation = CallVariation(np.random.default_rng([seed, 2]), n,
+                                               [f['foliage_attenuation'] for f in self.frogs])
+            sig = (float(self.get_parameter('mic_pos_sigma_m').value), float(self.get_parameter('mic_gain_sigma_db').value))
+            if max(sig) > 0.0:
+                self.mic_error = make_mic_error(np.random.default_rng([seed, 3]), *sig)
             self.bout_frog = None        # frog index of the current calling bout
             self.bout_left = 0           # calls left in the bout
             self.bout_gap_until = 0.0    # sim time until which nobody calls (between bouts)
@@ -190,9 +210,10 @@ class CoquiSoundEmitterNode(Node):
         self.call_counter = 0
         self.timer = self.create_timer(self.call_period, self._emit_cycle)
 
-        # Survey truth layer: (index of the frog calling now or None, its call reaches the robot)
-        self.truth_state = (None, False)
-        self.truth_calls = 0    # calls of the calling frogs, drives the pulse of the truth ring
+        # Survey truth layer: ({frog index: time it was last heard calling}, {frog indices within earshot})
+        self.truth_callers = {}
+        self.truth_audible = set()
+        self.truth_calls = 0    # counts calls, drives the pulse of the truth rings
         if self.survey and self.marker_pub is not None:
             # 1 Hz: refreshes the ring pulse and reaches RViz displays subscribed as volatile
             self.truth_timer = self.create_timer(1.0, self._publish_truth)
@@ -202,7 +223,7 @@ class CoquiSoundEmitterNode(Node):
             # do not print positions: the console is visible to whoever is testing the robot
             truth = 'drawn only on /sim/coqui_truth_markers (RViz)' if self.marker_pub is not None else 'not published'
             self.get_logger().info(
-                f"Coqui Sound Emitter (survey mode) started: {len(self.frogs)} frogs calling in bouts, "
+                f"Coqui Sound Emitter (survey mode) started: {len(self.frogs)} frogs calling ({'chorus' if self.chorus else 'in turns'}), "
                 f"audible to {self.max_range:.0f} m. True positions are {truth}.")
         else:
             frog_summary = ', '.join(
@@ -319,6 +340,21 @@ class CoquiSoundEmitterNode(Node):
         self.bout_left -= 1
         return self.bout_frog, True
 
+    def _callers(self, elapsed, array_origin_world):
+        """[(frog index, onset shift)] of the frogs calling in this frame."""
+        if not self.survey:
+            return [(self._select_active_calling_frog(array_origin_world), 0.0)]
+        if self.chorus is not None:
+            return self.chorus.step(elapsed)
+        idx, calling = self._survey_schedule(elapsed)     # 'turns'
+        if not calling:
+            return []
+        out = [(idx, 0.0)]
+        if len(self.frogs) > 1 and float(self.rng.random()) < self.overlap_prob:
+            other = int(self.rng.choice([i for i in range(len(self.frogs)) if i != idx]))
+            out.append((other, float(self.rng.uniform(0.05, 0.25))))
+        return out
+
     def _emit_cycle(self):
         elapsed = (self.get_clock().now() - self.start_time).nanoseconds * 1e-9
 
@@ -327,57 +363,26 @@ class CoquiSoundEmitterNode(Node):
             self.robot_pos_world + self.robot_rot_world @ ARRAY_BASE_OFFSET_IN_FOOTPRINT
         )
 
-        if self.survey:
-            if elapsed < self.start_delay:
-                caller_idx, in_bout = 0, False
-            else:
-                caller_idx, in_bout = self._survey_schedule(elapsed)
-        else:
-            caller_idx = self._select_active_calling_frog(array_origin_world)
-            in_bout = True
-        active = self.frogs[caller_idx]
-        frog_pos = np.array(active['pos'], dtype=np.float64)
-        center_dist = float(np.linalg.norm(array_origin_world - frog_pos))
-
-        # Synthesize source waveform(s) if past start_delay, not in return-home pause, and in range
-        is_calling = (
-            in_bout
-            and (elapsed >= self.start_delay)
-            and (elapsed >= self.pause_until_sec)
-            and (center_dist <= self.max_range)
-        )
-        num_mics = MIC_POSITIONS_BODY.shape[0]
-        sources = []
-        if is_calling:
+        callers = []      # [(frog index, onset shift)] of this frame
+        if elapsed >= self.start_delay and elapsed >= self.pause_until_sec:
+            callers = self._callers(elapsed, array_origin_world)
+        sources, audible = [], []
+        for idx, shift in callers:
+            fr = self.frogs[idx]
+            pos = np.array(fr['pos'], dtype=np.float64)
+            if float(np.linalg.norm(array_origin_world - pos)) > self.max_range:
+                continue
             self.call_counter += 1
-            pitch_scale = 0.97 + 0.012 * (caller_idx % 6)
-            base_wave = synthesize_coqui_call_frame(
-                FRAME_SAMPLES, SAMPLE_RATE, phase_seed=0.37 * self.call_counter, pitch_scale=pitch_scale
-            )
+            audible.append(idx)
             sources.append({
-                'pos': frog_pos,
-                'waveform': base_wave,
-                'foliage_attenuation': float(active.get('foliage_attenuation', 1.0)),
+                'pos': pos,
+                'waveform': synthesize_coqui_call_frame(
+                    FRAME_SAMPLES, SAMPLE_RATE, phase_seed=0.37 * self.call_counter + idx,
+                    pitch_scale=0.97 + 0.012 * (idx % 6), start_frac=shift),
+                'foliage_attenuation': float(fr.get('foliage_attenuation', 1.0)) if self.variation is None
+                else self.variation.gain(idx, pos, array_origin_world),
             })
-            # Overlapping chorus calls (survey mode): a second frog may call in the same window
-            if self.survey and len(self.frogs) > 1 and self.overlap_prob > 0.0:
-                if float(self.rng.random()) < self.overlap_prob:
-                    others = [i for i in range(len(self.frogs)) if i != caller_idx]
-                    idx2 = int(self.rng.choice(others))
-                    f2 = self.frogs[idx2]
-                    p2 = np.array(f2['pos'], dtype=np.float64)
-                    if float(np.linalg.norm(array_origin_world - p2)) <= self.max_range:
-                        wave2 = synthesize_coqui_call_frame(
-                            FRAME_SAMPLES, SAMPLE_RATE,
-                            phase_seed=0.53 * self.call_counter + idx2,
-                            pitch_scale=0.97 + 0.012 * (idx2 % 6),
-                            start_frac=float(self.rng.uniform(0.05, 0.25)),
-                        )
-                        sources.append({
-                            'pos': p2,
-                            'waveform': wave2,
-                            'foliage_attenuation': float(f2.get('foliage_attenuation', 1.0)),
-                        })
+        num_mics = MIC_POSITIONS_BODY.shape[0]
 
         clutter = self.survey and (float(self.rng.random()) < self.ambient_clutter_prob)
         multi_ch = propagate_sources_to_array(
@@ -390,6 +395,7 @@ class CoquiSoundEmitterNode(Node):
             echo_delay_ms=self.echo_delay_ms,
             ambient_clutter=clutter,
             rng=self.rng,
+            mic_error=self.mic_error,
         )
 
         # Publish 5-channel audio frame
@@ -404,8 +410,13 @@ class CoquiSoundEmitterNode(Node):
 
         if self.survey:
             if self.marker_pub is not None:
-                self._update_truth(caller_idx if in_bout else None, is_calling)
+                self._update_truth([i for i, _ in callers], audible)
             return
+
+        caller_idx = callers[0][0] if callers else self.current_caller_idx
+        active = self.frogs[caller_idx]
+        is_calling = bool(audible)
+        center_dist = float(np.linalg.norm(array_origin_world - np.array(active['pos'], dtype=np.float64)))
 
         # Publish metadata for RViz / diagnostics
         info = {
@@ -503,23 +514,29 @@ class CoquiSoundEmitterNode(Node):
 
         self.marker_pub.publish(ma)
 
-    def _update_truth(self, caller, audible: bool):
-        """Survey mode, once per call cycle: `caller` = index of the frog calling (in its bout) or None,
-        `audible` = its call reaches the robot (within max_audible_range_m). Re-publishes the truth scene
-        when either changes; the 1 Hz timer re-publishes it in between."""
-        if caller is not None:
-            self.truth_calls += 1
-        state = (caller, bool(audible))
-        if state != self.truth_state:
-            self.truth_state = state
+    def _update_truth(self, callers, audible):
+        """Survey mode, once per frame: frogs calling in it, and which of them reach the robot. A frog stays marked as
+        calling for a second after its call so the rings can be seen; the 1 Hz timer re-publishes in between."""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        before = set(self.truth_callers)
+        self.truth_callers = {i: t for i, t in self.truth_callers.items() if now - t < 1.0}
+        for i in callers:
+            self.truth_callers[i] = now
+            self.truth_audible.discard(i)
+        self.truth_audible |= set(audible)
+        self.truth_calls += len(callers)
+        if callers or set(self.truth_callers) != before:
             self._publish_truth()
 
     def _publish_truth(self):
-        self.marker_pub.publish(self._truth_scene(*self.truth_state))
+        self.marker_pub.publish(self._truth_scene(list(self.truth_callers), self.truth_audible))
 
-    def _truth_scene(self, caller, audible: bool = True) -> MarkerArray:
+    def _truth_scene(self, callers, audible=None) -> MarkerArray:
         """Survey mode, viewer-only simulation truth as one complete scene (DELETEALL first): every frog as a
-        magenta sphere + label, and a pulsing ring around the frog calling now (`caller` index, None: nobody)."""
+        magenta sphere + label, and a pulsing ring around each frog calling now (`callers`: indices; `audible`:
+        those whose call reaches the robot, None = all)."""
+        callers = [] if callers is None else [callers] if isinstance(callers, int) else list(callers)
+        audible = set(callers) if audible is None else set(audible)
         now = self.get_clock().now().to_msg()
         clear = Marker()
         clear.header.frame_id = 'map'
@@ -528,21 +545,21 @@ class CoquiSoundEmitterNode(Node):
         ma = MarkerArray(markers=[clear])
         for i, fr in enumerate(self.frogs):
             x, y, z = fr['pos']    # call point, 5 cm above the frog model origin
-            calling = i == caller
+            calling = i in callers
             ma.markers.append(make_marker(now, 'truth_frogs', i, Marker.SPHERE, (x, y, z), (0.22, 0.22, 0.22),
                                           TRUTH_RGB + (0.45,)))
             text = fr['name'] + ' (truth)'
             if calling:
-                text += ' CALLING' if audible else ' CALLING (out of earshot)'
+                text += ' CALLING' if i in audible else ' CALLING (out of earshot)'
             if fr['habitat']:
                 text += '\n' + fr['habitat']
             label = make_marker(now, 'truth_labels', i, Marker.TEXT_VIEW_FACING, (x, y, z + 0.45),
                                 (0.22, 0.22, 0.22), (TRUTH_RGB + (1.0,)) if calling else (1.0, 1.0, 1.0, 0.9))
             label.text = text
             ma.markers.append(label)
-        if caller is not None:
+        for i in callers:
             d = 0.8 + 0.4 * (self.truth_calls % 4)    # diameter pulses 0.8 .. 2.0 m with the calls
-            ma.markers.append(make_marker(now, 'truth_call', 0, Marker.CYLINDER, self.frogs[caller]['pos'],
+            ma.markers.append(make_marker(now, 'truth_call', i, Marker.CYLINDER, self.frogs[i]['pos'],
                                           (d, d, 0.02), TRUTH_RGB + (0.25,)))
         return ma
 

@@ -3,20 +3,22 @@
 
     EXPLORE      drive between listening stations that cover the survey area (stop and listen at each)
       -> a call is heard whose bearing does not point at a frog already recorded
-    HUNT         triangulate it: stop-listen, then move to the reachable spot that adds the most
-                 bearing parallax (chosen from the costmap, checked with Nav2's planner), repeat
-      -> triangulation converged
+    HUNT         triangulate that one frog: stop and listen until IT has been heard from here, then move to the
+                 reachable spot that adds the most bearing parallax (chosen from the costmap, checked with
+                 Nav2's planner), repeat. Other frogs' calls never move the robot (acoustic_hunt.py)
+      -> triangulation converged, or the frog becomes a lead to come back to
     VANTAGE      pick a camera viewpoint around the estimate (free, line of sight on the costmap,
                  reachable), standoff from the estimated height (on the ground vs perched)
     PHOTO        aim the pan-tilt camera at the estimate, search a few offsets, centre on the frog
-    RECORD       append the frog (map xyz + lat/lon + photo) to the survey record, back to EXPLORE
+    RECORD       append the frog (map xyz + photo) to the survey record, back to EXPLORE
+    REVISIT      go back to leads (frogs heard but not located) before calling the area covered
     HOME         when the area is covered or time is up
 
 Design rules
   * Nav2 is the only thing that moves the wheels. Every goal is first checked with ComputePathToPose;
     when Nav2 fails the node picks a different goal, it never steers by itself.
   * Only robot-side information is used: the costmap, the robot's own pose, the acoustic bearings /
-    triangulation from mic_array_localizer, the cameras and GPS. No simulation truth.
+    bearings from mic_array_localizer and the cameras. No GPS (the forest is GPS-denied), no simulation truth.
   * Everything runs on ROS time (sim time in Gazebo).
 
 What it shows in RViz (watching only, nothing reads these back)
@@ -40,7 +42,7 @@ from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration as MsgDuration, Time as MsgTime
 from lifecycle_msgs.srv import GetState
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Point, PointStamped, PoseStamped, Twist, Vector3, Vector3Stamped
+from geometry_msgs.msg import Point, PointStamped, PoseStamped, Twist, Vector3
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid, Odometry
@@ -50,11 +52,12 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, Image, Imu, NavSatFix
+from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
 import tf2_ros
 
+from . import acoustic_hunt as ah
 from . import slope_recovery as sr
 from . import survey_planning as sp
 from .survey_store import SurveyStore, load_known
@@ -77,6 +80,10 @@ PARAMS = {
     'min_frontier_cells': 4,
     'frontier_min_dist_m': 1.5,
     'frontier_handoff_m': 2.0,
+    'frontier_commit_m': 2.5,
+    'frontier_commit_sec': 8.0,
+    'frontier_commit_bonus_m': 3.0,
+    'explore_listen_every_m': 8.0,
     'frontier_size_weight': 0.15,
     'frontier_heading_penalty_m': 2.0,
     'whisper_bias_m': 5.0,
@@ -99,8 +106,16 @@ PARAMS = {
     'path_slope_weight': 3.0,
     # detection / hunt
     'min_detection_snr_db': 7.0,
-    'hunt_trigger_snr_db': 12.0,
-    'passive_window_sec': 120.0,
+    'min_coherence': 0.85,
+    'loudness_ref_db': 0.0,
+    'loudness_gate_db': 10.0,
+    'loudness_spread_db': 5.0,
+    'hunt_trigger_range_m': 12.0,
+    'moving_tf_max_age_s': 0.5,
+    'anchor_wait_sec': 25.0,
+    'anchor_listen_sec': 5.0,
+    'loudness_prior_sd_db': 4.0,
+    'passive_window_sec': 600.0,
     'detections_to_trigger': 2,
     'known_frog_radius_m': 2.0,
     'known_bearing_radius_m': 1.1,
@@ -109,10 +124,15 @@ PARAMS = {
     'stationary_max_vx': 0.05,
     'stationary_max_wz': 0.12,
     'stationary_hold_sec': 0.25,
-    'hunt_listen_sec': 4.0,
-    'hunt_min_new_rays': 2,
-    'quiet_step_limit_sec': 20.0,
+    'hunt_listen_max_sec': 45.0,
+    'hunt_min_new_rays': 3,
+    'min_step_separation_m': 0.7,
+    'group_link_deg': 3.0,
     'partial_min_parallax_deg': 12.0,
+    'lead_max_attempts': 3,
+    'lead_retry_sec': 120.0,
+    'lead_detour_m': 8.0,
+    'lead_listen_sec': 25.0,
     'reject_empty_open_photo': True,
     'pose_sigma_m': 0.08,
     'adaptive_steps': True,
@@ -129,13 +149,16 @@ PARAMS = {
     'min_parallax_deg': 15.0,
     'min_places': 3,
     'max_uncertainty_m': 0.6,
+    'min_rays_per_place': 2,
+    'max_level_sd_db': 3.0,
     'ray_inlier_deg': 2.0,
     'anchor_tol_deg': 6.0,
+    'anchor_slack_max_deg': 8.0,
+    'min_fix_range_m': 0.6,
     'max_range_m': 25.0,
     'doa_sigma_deg': 1.0,
     'bout_gap_s': 1.2,
-    'nominal_range_m': 6.0,
-    'no_call_timeout_sec': 90.0,
+    'nominal_range_max_m': 12.0,
     'hunt_timeout_sec': 420.0,
     'suppress_bearing_sec': 180.0,
     # vantage / camera
@@ -145,9 +168,15 @@ PARAMS = {
     'vantage_angles': 16,
     'vantage_extra_radii_m': [0.0, 0.5, 1.0, 2.0],
     'los_skip_end_m': 0.5,
+    'los_cost': 99,
     'no_los_penalty': 10.0,
     'extra_radius_penalty': 1.0,
     'camera_settle_sec': 2.0,
+    'still_wait_sec': 4.0,
+    'aim_tolerance_deg': 6.0,
+    'vantage_listen_sec': 8.0,
+    'vantage_confirm_sec': 45.0,
+    'elevation_topic': '/terrain_traversability/elevation_cloud',
     'camera_scan_offsets': [0.0, 0.0, 0.15, 0.0, -0.15, 0.0, 0.0, 0.12, 0.0, -0.12],  # (dpan, dtilt) pairs
     'image_topic': '/pt_camera/image_raw',
     'camera_info_topic': '/pt_camera/camera_info',
@@ -159,6 +188,7 @@ PARAMS = {
     'output_dir': '/root/ugv_ws/coqui_surveys',
     'run_id': '',
     'resume_survey': '',
+    'geo_ref': '',       # '' = no lat/lon (GPS-denied). Operator-surveyed 'lat,lon,map_x,map_y,heading_deg' otherwise
     'nav_goal_timeout_sec': 90.0,
     'plan_check_max': 4,
     'global_frame': 'map',
@@ -212,22 +242,27 @@ class CoquiSurveyNode(Node):
         self.image_stamp = 0.0
         self.cam_info = None
         self.pt_state = Vector3()
-        self.gps_ref = None         # (lat, lon, alt, map_xy)
-        self.recent_doa = []        # [(t, world_bearing, snr, origin_xy)]
-        self.passive_obs = []       # [(t, origin xyz, dir xyz, snr)] stationary passive bearings for triangulation
-        self.whisper_rays = []      # [(t, origin_xy, bearing, snr)] all passive bearings (incl. moving) for frontier bias
+        self.geo_ref = sp.parse_geo_ref(c['geo_ref'])   # (lat, lon, map_x, map_y, heading_deg) or None
+        self.recent_doa = []        # [(t, bearing, loudness, origin_xy, obs, stationary)] near calls of the last 4 s
+        self.passive_obs = []       # [(t, origin xyz, dir xyz, loudness)] stationary bearings, for triangulation
+        self.whisper_rays = []      # [(t, origin_xy, bearing, loudness)] every bearing (incl. moving) for frontier bias
         self.listening_for_new_calls = False
-        self.collecting = False     # True during a hunt: stationary bearings go into self.obs
-        self.obs = []               # [(t, origin xyz, dir xyz, snr)]
-        self.pending_call = None    # (t, bearing, origin_xy, origin xyz, dir xyz, seed obs)
+        self.collecting = False     # True during a hunt: stationary bearings go into self.obs_inbox
+        self.obs_inbox = []         # bearings heard since the hunt last looked [(t, origin xyz, dir xyz, loudness)]
+        self.pending_call = None    # (t, bearing, origin_xy, obs (t, o, d, loudness), stationary)
         self.suppressed = []        # [(until_t, origin_xy, bearing)] calls we gave up on
+        self.leads = ah.LeadBook(c)  # frogs heard but not located
+        self.heard = {'calls': 0, 'moving': 0, 'no_tf': 0, 'blended': 0, 'near': 0}   # since the last hearing_stats event
+        self._explore_goal = None   # frontier being driven to (commitment)
+        self._since_listen_m = 0.0  # metres driven since the robot last stood and listened
+        self._last_odo_xy = None
 
         self.known = load_known(c['resume_survey'])
         run_id = c['run_id'] or time.strftime('survey_%Y%m%d_%H%M%S_') + uuid.uuid4().hex[:4]
         self.store = SurveyStore(c['output_dir'], run_id, {
             'frame': self.gf, 'survey_area_xy': list(c['survey_area']), 'resumed_from': c['resume_survey'] or None,
             'known_frogs_at_start': len(self.known),
-            'note': 'pos is in the map frame; lat/lon from GPS (map x=east, y=north assumed)'})
+            'note': 'pos is in the map frame (GPS-denied: no GPS is used); lat/lon only when geo_ref was given'})
         self.state = 'INIT'
         self.listened = []          # stationary listening spots (full cover_radius_m)
         self.moving_listened = []   # moving pass samples (narrower moving_cover_radius_m)
@@ -238,6 +273,8 @@ class CoquiSurveyNode(Node):
         self._active_nav_handle = None
         self._last_cover_xy = None
         self._last_passive_check = 0.0
+        self._last_passive_t = -1.0
+        self.rejected_fixes = []    # fixes a photo contradicted
         # what RViz shows (publish_markers / build_scene); None = not shown. Own lock: the mission thread and
         # the 1 Hz timer both publish the scene.
         self.viz_lock = threading.Lock()
@@ -258,11 +295,12 @@ class CoquiSurveyNode(Node):
         self.create_subscription(Twist, c['cmd_vel_monitor_topic'], self._cmd_vel_cb, 10, callback_group=self.cb)
         self.create_subscription(String, '/ugv_audio/triangulation_status', self._status_cb, 20,
                                  callback_group=self.cb)
-        self.create_subscription(Vector3Stamped, '/ugv_audio/doa_bearing', self._doa_cb, 20, callback_group=self.cb)
+        self.create_subscription(String, '/ugv_audio/call', self._call_cb, 50, callback_group=self.cb)
+        self.elev_msg = None
+        self.create_subscription(PointCloud2, c['elevation_topic'], self._elev_cb, 1, callback_group=self.cb)
         self.create_subscription(Image, c['image_topic'], self._image_cb, sensor, callback_group=self.cb)
         self.create_subscription(CameraInfo, c['camera_info_topic'], self._caminfo_cb, sensor, callback_group=self.cb)
         self.create_subscription(Vector3, '/coqui_behavior/pan_tilt_state', self._pt_cb, 10, callback_group=self.cb)
-        self.create_subscription(NavSatFix, '/gps/fix', self._gps_cb, sensor, callback_group=self.cb)
         self.slope_cmd_pub = self.create_publisher(Twist, c['slope_cmd_vel_topic'], 10)
         self.emergency_cmd_pub = self.create_publisher(Twist, c['cmd_vel_monitor_topic'], 10)
         self.reset_pub = self.create_publisher(String, '/coqui/reset_triangulation', 10)
@@ -282,6 +320,7 @@ class CoquiSurveyNode(Node):
         self.planner = ActionClient(self, ComputePathToPose, 'compute_path_to_pose', callback_group=self.cb)
         self.create_timer(1.0, self._viz_timer_cb, callback_group=self.cb)
         self.create_timer(0.1, self._safety_timer_cb, callback_group=self.cb)
+        self.create_timer(60.0, self._hearing_stats_cb, callback_group=self.cb)
         self.get_logger().info(f'Coqui survey -> {self.store.dir} (known frogs at start: {len(self.known)})')
 
     # ===================================================================================== callbacks
@@ -405,25 +444,46 @@ class CoquiSurveyNode(Node):
             if o and all(math.hypot(o[0] - p[0], o[1] - p[1]) > 0.3 for p in self.ray_origins):
                 self.ray_origins.append((o[0], o[1]))
 
-    def _doa_cb(self, msg):
-        if msg.vector.z < self.cfg['min_detection_snr_db']:
+    def _bearing_tf(self, frame, stamp, stationary):
+        """TF of the microphone array for a call heard at `stamp`. The call often arrives a few ms before the pose of the
+        same instant; a driving robot then takes the newest pose (at most moving_tf_max_age_s old), which is plenty to
+        notice a frog. Returning None here is what made the robot deaf whenever its wheels turned."""
+        try:
+            return self.tf.lookup_transform(self.gf, frame, stamp)
+        except Exception:
+            pass
+        try:
+            tf = self.tf.lookup_transform(self.gf, frame, Time())
+        except Exception:
+            return None
+        if stationary or stamp.nanoseconds == 0:
+            return tf
+        tf_t = Time.from_msg(tf.header.stamp).nanoseconds
+        age = abs(stamp.nanoseconds - tf_t) * 1e-9
+        return tf if tf_t == 0 or age <= float(self.cfg['moving_tf_max_age_s']) else None
+
+    def _call_cb(self, msg):
+        """One detected coqui call from mic_array_localizer (JSON, see its docstring)."""
+        try:
+            call = json.loads(msg.data)
+            az, el, loud = float(call['az']), float(call['el']), float(call['level_db'])
+            snr, coherence = float(call['snr_db']), float(call.get('coherence', 1.0))
+        except (ValueError, KeyError, TypeError):
+            return
+        if snr < self.cfg['min_detection_snr_db']:
             return
         active = self.listening_for_new_calls or self.collecting
-        t = self.now()
-        stationary = self._is_stationary(t)
-        frame = msg.header.frame_id or self.cfg['array_frame']
-        stamp = Time.from_msg(msg.header.stamp) if (msg.header.stamp.sec or msg.header.stamp.nanosec) else Time()
-        try:
-            tf = self.tf.lookup_transform(self.gf, frame, stamp)
-        except Exception:
-            if not stationary:
-                return
-            try:
-                tf = self.tf.lookup_transform(self.gf, frame, Time())
-            except Exception:
-                return
+        t = float(call.get('t', 0.0)) or self.now()
+        stationary = self._is_stationary(t)   # standing when the call was captured, not when it got here
+        frame = call.get('frame') or self.cfg['array_frame']
+        tf = self._bearing_tf(frame, Time(nanoseconds=int(t * 1e9)), stationary)
+        with self.lock:
+            self.heard['calls'] += 1
+            self.heard['moving'] += 0 if stationary else 1
+            self.heard['no_tf'] += 1 if tf is None else 0
+        if tf is None:
+            return
         # 3D bearing in the map frame (array may be tilted on a slope)
-        az, el = msg.vector.x, msg.vector.y
         q = tf.transform.rotation
         R = np.array([[1 - 2 * (q.y * q.y + q.z * q.z), 2 * (q.x * q.y - q.z * q.w), 2 * (q.x * q.z + q.y * q.w)],
                       [2 * (q.x * q.y + q.z * q.w), 1 - 2 * (q.x * q.x + q.z * q.z), 2 * (q.y * q.z - q.x * q.w)],
@@ -432,46 +492,79 @@ class CoquiSurveyNode(Node):
         o = np.array([tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z])
         bearing = math.atan2(d[1], d[0])
         origin = (o[0], o[1])
-        use_for_pos = stationary or not self.cfg.get('stationary_only_triangulation', True)
+        clean = coherence >= float(self.cfg['min_coherence'])
+        # positions come only from a standing robot and from calls that are one frog: two frogs calling at once blend
+        # into a bearing that points at neither
+        use_for_pos = clean and (stationary or not self.cfg.get('stationary_only_triangulation', True))
         # every bearing is drawn in RViz (show_bearing), coloured by what happens to it below
-        if not active:   # not listening right now (photographing, driving home, ...)
+        if not clean:
+            with self.lock:
+                self.heard['blended'] += 1
+        # not listening right now (photographing, driving home, ...), or two frogs at once while standing. While driving
+        # the motors cost coherence too: such a bearing may still stop the robot, it just never becomes a position.
+        if not active or (not clean and (stationary or coherence < 0.5 * float(self.cfg['min_coherence']))):
+            self.show_bearing(o, d, 'ignored')
+            return
+        obs = (t, o, d, loud)
+        br_radius = float(self.cfg.get('known_bearing_radius_m', self.cfg['known_frog_radius_m']))
+        if sp.bearing_points_at_known(origin, bearing, self.known, br_radius, loudness=loud, cfg=self.cfg):
             self.show_bearing(o, d, 'ignored')
             return
         if self.collecting:
             if use_for_pos:
                 with self.lock:
-                    self.obs.append((t, o, d, float(msg.vector.z)))
-                self.show_bearing(o, d, 'hunt')
-            else:
-                self.show_bearing(o, d, 'ignored')
+                    self.obs_inbox.append(obs)
+            self.show_bearing(o, d, 'hunt' if use_for_pos else 'ignored')
             return
-        br_radius = float(self.cfg.get('known_bearing_radius_m', self.cfg['known_frog_radius_m']))
-        if sp.bearing_points_at_known(origin, bearing, self.known, br_radius):
-            self.show_bearing(o, d, 'ignored')
-            return
+        near = sp.call_is_near(loud, self.cfg)
+        with self.lock:
+            win = self.cfg['passive_window_sec']
+            self.whisper_rays = [r for r in self.whisper_rays if t - r[0] < 120.0][-59:] + [(t, origin, bearing, loud)]
+            if use_for_pos:
+                self.passive_obs = [r for r in self.passive_obs if t - r[0] < win][-399:] + [obs]
+            self.heard['near'] += 1 if near else 0
         for until, s_xy, s_bearing in self.suppressed:   # calls we already gave up on from near here
             if t < until and math.hypot(s_xy[0] - origin[0], s_xy[1] - origin[1]) < 3.0 and \
                     abs(sp.wrap(s_bearing - bearing)) < math.radians(20):
                 self.show_bearing(o, d, 'ignored')
                 return
+        lead = self.leads.match(origin, bearing, loud)
+        if lead is not None and (self.leads.exhausted(lead) or self.now() - lead['t'] < self.cfg['lead_retry_sec']):
+            self.show_bearing(o, d, 'ignored')   # already tried lately; its bearings are banked for the revisit
+            return
         self.show_bearing(o, d, 'new')
-        snr = float(msg.vector.z)
+        # Two tiers by distance (from loudness, not SNR: SNR also falls when the motors are loud): far calls bias
+        # frontier exploration and are banked when stationary; near ones stop the robot for a hunt.
+        if not near:
+            return
         with self.lock:
-            win = self.cfg['passive_window_sec']
-            self.whisper_rays = [r for r in self.whisper_rays if t - r[0] < win][-59:] + [(t, origin, bearing, snr)]
-            if use_for_pos:
-                self.passive_obs = [r for r in self.passive_obs if t - r[0] < win][-119:] + [(t, o, d, snr)]
-            # Two-tier SNR gate: faint distant calls (< hunt_trigger_snr_db) bias frontier exploration
-            # (and cross-triangulate passively when stationary); loud/clear calls trigger an immediate hunt
-            # (which stops the robot and collects stationary bearings for accurate triangulation).
-            if snr >= self.cfg['hunt_trigger_snr_db']:
-                self.recent_doa = [r for r in self.recent_doa if t - r[0] < 4.0] + \
-                    [(t, bearing, snr, origin, o, d, use_for_pos)]
-                agree = [r for r in self.recent_doa if abs(sp.wrap(r[1] - bearing)) < math.radians(15)]
-                if len(agree) >= self.cfg['detections_to_trigger'] and self.pending_call is None:
-                    # Only seed triangulation with stationary agreeing bearings (moving ones still trigger the stop!)
-                    seed_obs = [(r[0], r[4], r[5], r[2]) for r in agree if r[6]]
-                    self.pending_call = (t, bearing, origin, o, d, seed_obs)
+            self.recent_doa = [r for r in self.recent_doa if t - r[0] < 6.0] + \
+                [(t, bearing, loud, origin, obs, use_for_pos)]
+            agree = [r for r in self.recent_doa if abs(sp.wrap(r[1] - bearing)) < math.radians(15)
+                     and abs(r[2] - loud) <= 6.0]
+            if len(agree) >= self.cfg['detections_to_trigger'] and self.pending_call is None:
+                self.pending_call = (t, bearing, origin, obs, use_for_pos)
+
+    def _elev_cb(self, msg):
+        self.elev_msg = msg     # read on demand (ground_z)
+
+    def ground_z(self, x, y, radius=0.45):
+        """Measured terrain height (map) around (x, y), or None where the robot has not seen the ground."""
+        msg = self.elev_msg
+        if msg is None or msg.width == 0:
+            return None
+        try:
+            tf = self.tf.lookup_transform(self.gf, msg.header.frame_id, Time()).transform
+        except Exception:
+            return None
+        a = np.frombuffer(msg.data, np.float32).reshape(-1, msg.point_step // 4)[:, :3].astype(float)
+        yaw = 2.0 * math.atan2(tf.rotation.z, tf.rotation.w)
+        cs, sn = math.cos(yaw), math.sin(yaw)
+        px = cs * a[:, 0] - sn * a[:, 1] + tf.translation.x
+        py = sn * a[:, 0] + cs * a[:, 1] + tf.translation.y
+        m = np.hypot(px - x, py - y) <= radius
+        # low percentile: grass and bushes stand on the ground, they are not the ground
+        return float(np.percentile(a[m, 2], 20) + tf.translation.z) if int(m.sum()) >= 5 else None
 
     def _image_cb(self, msg):
         self.image = msg
@@ -486,12 +579,13 @@ class CoquiSurveyNode(Node):
     def _viz_timer_cb(self):
         self.publish_markers()   # 1 Hz: keeps the RViz HUD clock and state live (never waits)
 
-    def _gps_cb(self, msg):
-        if msg.status.status < 0 or not math.isfinite(msg.latitude):
+    def _hearing_stats_cb(self):
+        """Once a minute in events.jsonl: what the microphones gave the mission (is the robot deaf while driving?)."""
+        if not self.mission_active:
             return
-        p = self.pose(quiet=True)
-        if p is not None:
-            self.gps_ref = (msg.latitude, msg.longitude, msg.altitude, (p[0], p[1]), p[2])
+        with self.lock:
+            st, self.heard = self.heard, {k: 0 for k in self.heard}
+        self.store.log_event('hearing_stats', t=round(self.now(), 1), **st)
 
     # ======================================================================================= helpers
     def now(self):
@@ -596,52 +690,65 @@ class CoquiSurveyNode(Node):
     def _weak_rays(self):
         """Recent passive bearings [(origin_xy, bearing_rad, snr)] not pointing at known/suppressed frogs."""
         t = self.now()
-        win = self.cfg['passive_window_sec']
+        win = 120.0
         br_radius = float(self.cfg.get('known_bearing_radius_m', self.cfg['known_frog_radius_m']))
         with self.lock:
             snap = list(self.whisper_rays)
         out = []
-        for rt, origin, br, snr in snap:
+        for rt, origin, br, loud in snap:
             if t - rt > win:
                 continue
-            if sp.bearing_points_at_known(origin, br, self.known, br_radius):
+            if sp.bearing_points_at_known(origin, br, self.known, br_radius, loudness=loud, cfg=self.cfg):
                 continue
             if any(t < until and math.hypot(s_xy[0] - origin[0], s_xy[1] - origin[1]) < 3.0 and
                    abs(sp.wrap(s_b - br)) < math.radians(20) for until, s_xy, s_b in self.suppressed):
                 continue
-            out.append((origin, br, snr))
+            out.append((origin, br, loud))
         return out[-20:]
 
+    def _usable_passive(self, limit=200):
+        """Banked stationary bearings that do not point at recorded frogs (newest last)."""
+        t = self.now()
+        win = self.cfg['passive_window_sec']
+        br_radius = float(self.cfg.get('known_bearing_radius_m', self.cfg['known_frog_radius_m']))
+        with self.lock:
+            recent = [r for r in self.passive_obs if t - r[0] < win][-limit:]
+        return [r for r in recent if not sp.bearing_points_at_known(
+            (float(r[1][0]), float(r[1][1])), math.atan2(float(r[2][1]), float(r[2][0])), self.known, br_radius,
+            loudness=r[3], cfg=self.cfg)]
+
     def _check_passive_trigger(self):
-        """Trigger a hunt if stationary passive bearings already cross-triangulate a quiet frog."""
+        """Start a hunt if the banked stationary bearings already locate an unrecorded frog completely."""
         t = self.now()
         if self.pending_call is not None or t - self._last_passive_check < 1.5:
             return
         self._last_passive_check = t
-        win = self.cfg['passive_window_sec']
-        br_radius = float(self.cfg.get('known_bearing_radius_m', self.cfg['known_frog_radius_m']))
-        with self.lock:
-            recent = [r for r in self.passive_obs if t - r[0] < win][-50:]
-        if len(recent) < 4:
+        obs = self._usable_passive()
+        if len(obs) < int(self.cfg['min_rays']) or obs[-1][0] == self._last_passive_t:
             return
-        filt = []
-        for r in recent:
-            origin = (float(r[1][0]), float(r[1][1]))
-            br = math.atan2(float(r[2][1]), float(r[2][0]))
-            if sp.bearing_points_at_known(origin, br, self.known, br_radius):
+        self._last_passive_t = obs[-1][0]
+        # anchor on each recent group of bearings in turn: in a chorus the newest bearing is any frog's
+        tried = []
+        for k in range(len(obs) - 1, max(-1, len(obs) - 12), -1):
+            ob = obs[k]
+            br = math.atan2(float(ob[2][1]), float(ob[2][0]))
+            if any(abs(sp.wrap(br - b)) < math.radians(6) and math.hypot(ob[1][0] - o[0], ob[1][1] - o[1]) < 0.5
+                   for b, o in tried):
                 continue
-            if any(t < until and math.hypot(s_xy[0] - origin[0], s_xy[1] - origin[1]) < 3.0 and
+            tried.append((br, ob[1]))
+            if any(t < until and math.hypot(s_xy[0] - ob[1][0], s_xy[1] - ob[1][1]) < 3.0 and
                    abs(sp.wrap(s_b - br)) < math.radians(20) for until, s_xy, s_b in self.suppressed):
                 continue
-            filt.append(r)
-        tri, a_obs = sp.check_passive_triangulation(filt, self.known, self.cfg)
-        if tri is not None and a_obs is not None:
-            a_o, a_d = a_obs[1], a_obs[2]
-            br = math.atan2(float(a_d[1]), float(a_d[0]))
-            origin = (float(a_o[0]), float(a_o[1]))
-            with self.lock:
-                if self.pending_call is None:
-                    self.pending_call = (a_obs[0], br, origin, a_o, a_d, filt)
+            tri, a_obs = sp.check_passive_triangulation(obs[:k] + obs[k + 1:] + [ob], self.known, self.cfg)
+            if tri is not None and a_obs is not None and not self._rejected_spot(tri['pos']):
+                with self.lock:
+                    if self.pending_call is None:
+                        self.pending_call = (a_obs[0], br, (float(a_obs[1][0]), float(a_obs[1][1])), a_obs, True)
+                return
+
+    def _rejected_spot(self, pos):
+        """A photo already showed there is no frog at pos."""
+        return any(math.hypot(pos[0] - r[0], pos[1] - r[1]) < 0.8 for r in self.rejected_fixes)
 
     def _record_cover_pose(self, p, stationary=False):
         if p is None or not self.listening_for_new_calls:
@@ -649,6 +756,7 @@ class CoquiSurveyNode(Node):
         if stationary:
             self.listened.append((p[0], p[1]))
             self._last_cover_xy = (p[0], p[1])
+            self._since_listen_m = 0.0
             return
         step = self.cfg['trajectory_cover_step_m']
         if self._last_cover_xy is None or math.hypot(p[0] - self._last_cover_xy[0], p[1] - self._last_cover_xy[1]) >= step:
@@ -663,6 +771,12 @@ class CoquiSurveyNode(Node):
                 self._wait(h.cancel_goal_async(), 3.0)
             except Exception:
                 pass
+
+    def _track_distance(self, p):
+        """Metres driven since the robot last stood and listened."""
+        if self._last_odo_xy is not None:
+            self._since_listen_m += math.hypot(p[0] - self._last_odo_xy[0], p[1] - self._last_odo_xy[1])
+        self._last_odo_xy = (p[0], p[1])
 
     def navigate(self, x, y, yaw, label, abort_on_call=False, handoff_frontier=False):
         """Drive with Nav2. Returns 'SUCCEEDED', 'HANDOFF' (preemptive frontier handoff while moving),
@@ -695,10 +809,13 @@ class CoquiSurveyNode(Node):
         t_start = self.now()
         t_end = t_start + self.cfg['nav_goal_timeout_sec']
         self.slope_detector.reset_motion()
+        p_start = self.pose(quiet=True)
         while rclpy.ok() and not res_f.done():
             self._check_safety_abort()
             p = self.pose(quiet=True)
             now_t = self.now()
+            if p is not None:
+                self._track_distance(p)
             if self.cfg['slope_recovery_enabled'] and p is not None and self.imu_slope is not None:
                 cmd_t, cmd_vx, cmd_wz = self.last_cmd_vel
                 if now_t - cmd_t > 0.6:
@@ -719,9 +836,15 @@ class CoquiSurveyNode(Node):
                 if self.pending_call is not None:
                     self._cancel_active_nav()
                     return 'CALL'
+                if self.listening_for_new_calls and self._since_listen_m >= self.cfg['explore_listen_every_m']:
+                    self._cancel_active_nav()
+                    return 'LISTEN'
             if handoff_frontier and p is not None and now_t - t_start > 0.8:
                 dist_goal = math.hypot(x - p[0], y - p[1])
-                if dist_goal <= self.cfg['frontier_handoff_m'] or not sp.frontier_still_unknown((x, y), self.grid(), 1.2):
+                driven = 0.0 if p_start is None else math.hypot(p[0] - p_start[0], p[1] - p_start[1])
+                if sp.frontier_handoff(dist_goal, driven, now_t - t_start,
+                                       sp.frontier_still_unknown((x, y), self.grid(), 1.2), self.cfg,
+                                       None if p_start is None else math.hypot(x - p_start[0], y - p_start[1])):
                     # keep robot rolling at speed while explore_step computes and preempts with the next frontier
                     self.nav_fail_streak = 0
                     self.good_spots.append((p[0], p[1]))
@@ -1081,6 +1204,8 @@ class CoquiSurveyNode(Node):
             result = 'no reachable stations left'
         else:
             result = 'area covered'
+        if self.leads.leads:
+            result = f'{result} ({len(self.leads.leads)} frogs heard but not located)'
         self._cancel_active_nav()
         returned_home, home_dist_m = None, None
         if self.cfg['return_home']:
@@ -1117,6 +1242,12 @@ class CoquiSurveyNode(Node):
         failed = self._active_failed()
         self.listening_for_new_calls = True
 
+        # A frog heard nearby but not located is worth a short detour before driving on
+        near_leads = self.leads.due((p[0], p[1]), self.now(), max_dist=self.cfg['lead_detour_m'])
+        if near_leads:
+            self.revisit_lead(near_leads[0])
+            return True
+
         # Check remaining uncovered stations so we know when the full survey box is covered
         all_st_cands = sp.station_candidates(
             (p[0], p[1]), self.cells, self.listened, self.cfg['cover_radius_m'],
@@ -1137,6 +1268,11 @@ class CoquiSurveyNode(Node):
                 self.clear_costmaps(include_global=False)
                 return True
             self._cancel_active_nav()
+            # the area is covered; go back to every frog that was heard but not located before saying so
+            leads = self.leads.due((p[0], p[1]), float('inf'))
+            if leads:
+                self.revisit_lead(leads[0])
+                return True
             return False
         st_cands = [c for c in all_st_cands if grid is None or grid.inside(*c[0])]
 
@@ -1147,7 +1283,7 @@ class CoquiSurveyNode(Node):
                                               self.cfg, weak_rays=self._weak_rays(),
                                               uncovered_xy=[c for _, c in all_st_cands],
                                               cover_radius=self.cfg['cover_radius_m'],
-                                              known=self.known)
+                                              known=self.known, prev_goal=self._explore_goal)
             if fr_cands:
                 fr_goals = [xy for _, xy, _ in fr_cands]
                 (goal, L) = self.best_reachable(fr_goals, fast_accept=True)
@@ -1196,9 +1332,13 @@ class CoquiSurveyNode(Node):
         self.set_state('EXPLORE', mode=mode, goal=[round(goal[0], 1), round(goal[1], 1)], path_m=round(L, 1),
                        uncovered=len(all_st_cands))
         yaw = math.atan2(goal[1] - p[1], goal[0] - p[0])
+        self._explore_goal = (goal[0], goal[1]) if mode == 'frontier' else None
         res = self.navigate(goal[0], goal[1], yaw, mode, abort_on_call=True,
                             handoff_frontier=(mode == 'frontier'))
         if res in ('CALL', 'HANDOFF'):
+            return True
+        if res == 'LISTEN':   # it has been driving for a while: stand and listen (the only bearings good for positions)
+            self.listen_at_station()
             return True
         if res == 'SUCCEEDED':
             if mode == 'frontier':
@@ -1206,169 +1346,183 @@ class CoquiSurveyNode(Node):
             else:
                 self.listen_at_station()
         else:
+            self._explore_goal = None
             self._mark_failed(goal)
             self.store.log_event('station_failed', mode=mode, goal=[round(goal[0], 2), round(goal[1], 2)], result=res)
         return True
 
-    # ---------------------------------------------------------------------------------------- hunt
-    def triangulate(self, anchor):
-        with self.lock:
-            obs = list(self.obs)
-        if len(obs) < 2:
-            return None, obs
-        groups = sp.bout_ids([o[0] for o in obs], self.cfg['bout_gap_s'])
-        tri = sp.robust_triangulate([o[1] for o in obs], [o[2] for o in obs], anchor, self.cfg, groups=groups)
-        return tri, obs
-
-    def _hunt_listen(self, max_sec, min_new):
-        """Wait up to `max_sec`, exiting early once `min_new` new stationary bearings arrive."""
-        with self.lock:
-            n0 = len(self.obs)
-        t0 = self.now()
-        end = t0 + max_sec
-        while rclpy.ok() and self.now() < end:
-            self._check_safety_abort()
-            with self.lock:
-                got = len(self.obs) - n0
-            if got >= min_new and (self.now() - t0) >= 0.8:
+    def revisit_lead(self, lead):
+        """Go and listen near a frog that was heard but not located. A call from it starts a normal hunt."""
+        p = self.pose()
+        goal, L = self.best_reachable(self.leads.listening_places(lead, (p[0], p[1]), self.grid(), self.cfg, self.known))
+        self.set_state('REVISIT', lead=lead['id'], attempt=lead['attempts'] + 1,
+                       pos=[round(v, 1) for v in lead['pos']], goal=None if goal is None else [round(v, 1) for v in goal])
+        lead['t'] = -float('inf')       # its calls may start a hunt now
+        self.suppressed = [(u, o, b) for u, o, b in self.suppressed if abs(sp.wrap(
+            b - math.atan2(lead['pos'][1] - o[1], lead['pos'][0] - o[0]))) > math.radians(25)]
+        self.listening_for_new_calls = True
+        if goal is not None:
+            yaw = math.atan2(lead['pos'][1] - goal[1], lead['pos'][0] - goal[0])
+            if self.navigate(goal[0], goal[1], yaw, lead['id'], abort_on_call=True) == 'CALL':
                 return
-            time.sleep(0.05)
+            self.sleep(self.cfg['lead_listen_sec'], abort_on_call=True)
+            if self.pending_call is None:
+                self._check_passive_trigger()
+            if self.pending_call is not None:
+                return
+        lead['attempts'] += 1
+        lead['t'] = self.now()
+        lead['reason'] = 'no reachable listening place' if goal is None else 'silent on revisit'
+        self.store.set_unresolved(self.leads.records())
+
+    # ---------------------------------------------------------------------------------------- hunt
+    def _take_inbox(self):
+        with self.lock:
+            obs, self.obs_inbox = self.obs_inbox, []
+        return obs
+
+    def _find_anchor(self, rough):
+        """The call that started the hunt was heard while driving (or blended with another): stand still until the same
+        frog is heard cleanly. Returns (anchor, every clean bearing heard meanwhile)."""
+        t0 = self.now()
+        heard, t_end = [], t0 + float(self.cfg['anchor_wait_sec'])
+        while rclpy.ok() and self.now() < t_end:
+            self._check_safety_abort()
+            heard += self._take_inbox()
+            anchor = ah.pick_anchor(heard, rough, self.cfg)
+            if anchor is not None and self.now() - t0 >= float(self.cfg['anchor_listen_sec']):
+                return anchor, heard     # not the first call that fits: another frog's may come before the right one's
+            time.sleep(0.1)
+        return None, heard
+
+    def _hunt_seed(self, anchor, heard):
+        """Bearings that may help this hunt: banked ones from the last minutes within 15 m, plus `heard`."""
+        seed, seen = [], set()
+        for r in self._usable_passive() + list(heard):
+            if math.hypot(float(r[1][0]) - float(anchor[1][0]), float(r[1][1]) - float(anchor[1][1])) <= 15.0 \
+                    and round(r[0], 3) not in seen:
+                seen.add(round(r[0], 3))
+                seed.append(r)
+        return seed
 
     def hunt(self):
+        """Locate the one frog whose call is pending (acoustic_hunt.HuntTracker decides; this drives)."""
         self._cancel_active_nav()
-        t_call, bearing, origin, a_o, a_d, seed = self.pending_call
-        anchor = (a_o, a_d)
+        t_call, bearing, origin, call, clean = self.pending_call
         self.listening_for_new_calls = False
         self.reset_triangulation()   # localizer's own estimate (RViz only) starts fresh too
         t0 = self.now()
-        win = self.cfg['passive_window_sec']
-        br_radius = float(self.cfg.get('known_bearing_radius_m', self.cfg['known_frog_radius_m']))
-        with self.lock:
-            # Seed the hunt with stationary passive bearings collected while exploring (deduped by timestamp),
-            # excluding rays that point at already-recorded frogs or were taken far away (>15 m).
-            seen_t = set()
-            merged = []
-            for r in list(self.passive_obs[-60:]):
-                if t0 - r[0] > win or round(r[0], 3) in seen_t:
-                    continue
-                ro = (float(r[1][0]), float(r[1][1]))
-                if math.hypot(ro[0] - a_o[0], ro[1] - a_o[1]) > 15.0:
-                    continue
-                rbr = math.atan2(float(r[2][1]), float(r[2][0]))
-                if sp.bearing_points_at_known(ro, rbr, self.known, br_radius):
-                    continue
-                seen_t.add(round(r[0], 3))
-                merged.append(r)
-            for r in list(seed):
-                if t0 - r[0] <= win and round(r[0], 3) not in seen_t:
-                    seen_t.add(round(r[0], 3))
-                    merged.append(r)
-            merged.sort(key=lambda r: r[0])
-            self.obs = merged
+        self._take_inbox()
         self.collecting = True
-        self.set_state('HUNT', bearing_deg=round(math.degrees(bearing)), heard_at=[round(v, 1) for v in origin])
-        steps, plan_fail = 0, 0
-        step_failed = []
-        visited_steps = [(float(a_o[0]), float(a_o[1]))]
-        outcome, tri = None, None
+        self.set_state('HUNT', bearing_deg=round(math.degrees(bearing)), heard_at=[round(float(v), 1) for v in origin])
+        anchor, heard = (call, []) if clean else self._find_anchor(call)
+        if anchor is None:
+            self._end_hunt(None, 'call not heard again after stopping', t0, call, heard)
+            return
+        tracker = ah.HuntTracker(anchor, self.cfg, self.now(), known=self.known, seed=self._hunt_seed(anchor, heard))
+        p = self.pose()
+        tracker.at_place((p[0], p[1]), self.now())
+        plan_fail, step_failed, shown, outcome = 0, [], -1, 'stopped'
         while rclpy.ok():
             self._check_safety_abort()
-            # On step 0 check first whether stationary passive bearings already converged!
-            if steps > 0:
-                self._hunt_listen(self.cfg['hunt_listen_sec'], self.cfg['hunt_min_new_rays'])
-            else:
-                tri0, _ = self.triangulate(anchor)
-                if not sp.triangulation_done(tri0, self.cfg):
-                    self._hunt_listen(self.cfg['hunt_listen_sec'], self.cfg['hunt_min_new_rays'])
+            for o in self._take_inbox():
+                tracker.add(o)
+            action, why = tracker.decide(self.now())
+            if len(tracker.obs) != shown:
+                shown = len(tracker.obs)
+                self.show_hunt(tracker.obs, tracker.triangulate(), (anchor[1], anchor[2]))
+            if action == 'end':
+                outcome = why
+                break
+            if action == 'listen':
+                time.sleep(0.2)
+                continue
             p = self.pose()
-            self.listened.append((p[0], p[1]))
-            if all(math.hypot(p[0] - q[0], p[1] - q[1]) > 0.3 for q in visited_steps):
-                visited_steps.append((p[0], p[1]))
-            tri, obs = self.triangulate(anchor)
-            self.show_hunt(obs, tri, anchor)
-            last_obs_t = obs[-1][0] if obs else t0
-            quiet_s = self.now() - last_obs_t
-            if quiet_s > self.cfg['no_call_timeout_sec'] or (steps >= 1 and quiet_s > self.cfg['quiet_step_limit_sec']):
-                outcome = 'converged (frog quiet)' if sp.accept_partial_triangulation(tri, self.cfg) \
-                    else 'frog stopped calling'
-                break
-            if tri is None:
-                # one listening place so far: assume a nominal range along the triggering bearing
-                est = [a_o[0] + self.cfg['nominal_range_m'] * math.cos(bearing),
-                       a_o[1] + self.cfg['nominal_range_m'] * math.sin(bearing), a_o[2]]
-                places = list(visited_steps)
-            else:
-                est = tri['pos']
-                places = [(o[1][0], o[1][1]) for o, m in zip(obs, tri['inlier_mask']) if m]
-                if tri['n_origins'] >= 2 and sp.near_known(est, self.known, self.cfg['known_frog_radius_m']):
-                    outcome = 'already recorded frog'
-                    break
-                if sp.triangulation_done(tri, self.cfg):
-                    outcome = 'converged'
-                    break
-            if steps >= self.cfg['max_steps'] or self.now() - t0 > self.cfg['hunt_timeout_sec']:
-                outcome = 'converged (step limit)' if sp.accept_partial_triangulation(tri, self.cfg) else 'gave up'
-                break
-            if p is not None and all(math.hypot(p[0] - q[0], p[1] - q[1]) > 0.3 for q in places):
-                places.append((p[0], p[1]))
             grid = self.grid()
-            cands = sp.baseline_step_candidates((p[0], p[1]), est[:2], places, grid, self.cfg, known=self.known)
+            cands = tracker.step_candidates((p[0], p[1]), grid, avoid=step_failed)
             if not cands:   # nothing seen-free around: allow unseen ground
-                cands = sp.baseline_step_candidates((p[0], p[1]), est[:2], places, grid, self.cfg,
-                                                    allow_unknown=True, known=self.known)
-            cands = [c for _, c in cands
-                     if all(math.hypot(c[0] - f[0], c[1] - f[1]) > 0.6 for f in step_failed)]
-            goal, L = self.best_reachable(cands, extra_cost=lambda c, rank: 0.5 * rank)
-            steps += 1
-            info = {'step': steps, 'obs': len(obs), 'est': [round(v, 2) for v in est]}
+                cands = tracker.step_candidates((p[0], p[1]), grid, allow_unknown=True, avoid=step_failed)
+            goal, L = self.best_reachable([c for _, c in cands], extra_cost=lambda c, rank: 0.5 * rank)
+            tracker.steps += 1
+            tri, est = tracker.triangulate(), tracker.estimate_xy()
+            info = {'step': tracker.steps, 'why': why, 'obs': len(tracker.obs), 'est': [round(v, 2) for v in est]}
             if tri:
                 info.update(inliers=tri['inliers'], places=tri['n_origins'], parallax_deg=tri['parallax_deg'],
-                            unc_m=tri['uncertainty_m'])
+                            unc_m=tri['uncertainty_m'], level_db=tri['source_level_db'])
             self.set_state('HUNT', **info)
             if goal is None:
                 plan_fail += 1
                 if plan_fail >= 3:
-                    outcome = 'converged (no step)' if sp.accept_partial_triangulation(tri, self.cfg) \
-                        else 'no reachable baseline step'
+                    outcome = tracker.finish('no reachable step')
                     break
+                self.sleep(2.0)     # the costmap may still be filling in
+                tracker.at_place((p[0], p[1]), self.now())
                 continue
             yaw = math.atan2(est[1] - goal[1], est[0] - goal[0])
-            if self.navigate(goal[0], goal[1], yaw, f'baseline step {steps}') != 'SUCCEEDED':
+            if self.navigate(goal[0], goal[1], yaw, f'baseline step {tracker.steps}') != 'SUCCEEDED':
                 step_failed.append(goal)    # Nav2 could not get there: never pick that spot again
                 if self.nav_fail_streak >= 3:
-                    outcome = 'converged (robot stuck)' if sp.accept_partial_triangulation(tri, self.cfg) \
-                        else 'robot stuck'
+                    outcome = tracker.finish('robot stuck')
                     break
+            p = self.pose()
+            tracker.at_place((p[0], p[1]), self.now())
+        self._end_hunt(tracker, outcome, t0, anchor, heard)
+
+    def _end_hunt(self, tracker, outcome, t0, anchor, heard):
+        """Log the hunt, photograph a converged fix, and remember an unresolved frog as a lead."""
         self.collecting = False
-        tri, obs = self.triangulate(anchor)
-        self.show_hunt(obs, tri, anchor)
-        # Preserve rejected outlier bearings (or all bearings if hunt failed to converge) in passive_obs
-        now_t = self.now()
-        if tri is not None and 'inlier_mask' in tri:
-            keep_passive = [o for o, ok in zip(obs, tri['inlier_mask']) if not ok and now_t - o[0] <= win]
-        else:
-            keep_passive = [o for o in obs if now_t - o[0] <= win]
-        if keep_passive:
-            with self.lock:
-                self.passive_obs = (self.passive_obs + keep_passive)[-120:]
-        summary = None if tri is None else {k: v for k, v in tri.items() if k != 'inlier_mask'}
-        self.store.log_event('hunt_end', outcome=outcome, tri=summary, steps=steps,
+        tri = None if tracker is None else tracker.triangulate()
+        obs = list(heard) if tracker is None else tracker.obs
+        leftover = obs if tracker is None else tracker.leftover()
+        with self.lock:   # bearings this hunt did not use are other frogs': keep them for the next hunt
+            have = {round(r[0], 3) for r in self.passive_obs}
+            self.passive_obs = sorted(self.passive_obs + [o for o in leftover if round(o[0], 3) not in have],
+                                      key=lambda o: o[0])[-400:]
+        steps = 0 if tracker is None else tracker.steps
+        self.store.log_event('hunt_end', t=round(self.now(), 1), outcome=outcome, steps=steps,
+                             tri=None if tri is None else {k: v for k, v in tri.items() if k != 'inlier_mask'},
                              duration_s=round(self.now() - t0, 1),
-                             anchor=[[round(float(v), 3) for v in a_o], [round(float(v), 4) for v in a_d]],
+                             places=[] if tracker is None else [[round(v, 2) for v in q] for q in tracker.places],
+                             anchor=[round(anchor[0], 2), [round(float(v), 3) for v in anchor[1]],
+                                     [round(float(v), 4) for v in anchor[2]], round(float(anchor[3]), 1)],
                              obs=[[round(o[0], 2)] + [round(float(v), 3) for v in o[1]] +
-                                  [round(float(v), 4) for v in o[2]] + [round(o[3], 1)] for o in obs])
+                                  [round(float(v), 4) for v in o[2]] + [round(float(o[3]), 1)] for o in obs])
         self.pending_call = None
         self.recent_doa = []
-        if outcome and outcome.startswith('converged') and tri is not None:
-            self.visit_and_photograph(tri, steps, self.now() - t0)
+        recorded = False
+        if outcome.startswith('converged') and tri is not None:
+            recorded, why = self.visit_and_photograph(tracker, steps, self.now() - t0)
+            tri = tracker.triangulate() or tri
+            if not recorded:
+                outcome = f'rejected ({why})'
+                if why in ('photo_contradicts_open_ground', 'unseen_and_not_heard_at_the_viewpoint'):
+                    self.rejected_fixes.append(tuple(tri['pos']))
+        if tracker is not None:
+            self.listened += ah.coverage_places(tracker.places, recorded)
+        if recorded:
+            self.leads.resolve_near(self.store.frogs[-1]['pos'], self.cfg['known_frog_radius_m'])
         else:
-            self.suppressed.append((self.now() + self.cfg['suppress_bearing_sec'], origin, bearing))
+            a_o = (float(anchor[1][0]), float(anchor[1][1]))
+            a_b = math.atan2(float(anchor[2][1]), float(anchor[2][0]))
+            self.suppressed.append((self.now() + self.cfg['suppress_bearing_sec'], a_o, a_b))
+            if outcome != 'already recorded frog':
+                if tracker is None:
+                    r = min(max(sp.implied_range_m(anchor[3], self.cfg), 2.0), self.cfg['nominal_range_max_m'])
+                    est, spread = (a_o[0] + r * math.cos(a_b), a_o[1] + r * math.sin(a_b)), 0.4 * r
+                else:
+                    est, spread = tracker.estimate_xy(), 3.0 if tri is None else tri['uncertainty_m']
+                ld = self.leads.note(anchor, est, spread, self.now(), outcome)
+                self.store.log_event('lead', t=round(self.now(), 1), id=ld['id'], attempts=ld['attempts'],
+                                     pos=[round(v, 2) for v in ld['pos']], spread_m=round(ld['spread_m'], 2), why=outcome)
             self.set_state('HUNT_END', outcome=outcome)
+        self.store.set_unresolved(self.leads.records())
         self.publish_markers(estimate=None, rays=None, anchor=None)   # RViz: this hunt is over
         self.listening_for_new_calls = True
 
     # -------------------------------------------------------------------------------- vantage/photo
-    def visit_and_photograph(self, st, steps, hunt_s):
+    def visit_and_photograph(self, tracker, steps, hunt_s):
+        """Drive to a viewpoint, listen there, photograph. Returns (recorded, why)."""
+        st = tracker.triangulate()
         est = st['pos']
         p = self.pose()
         kind = sp.classify_height(est[2], p[2], self.cfg['elevated_threshold_m'])
@@ -1413,10 +1567,74 @@ class CoquiSurveyNode(Node):
                 vantage = 'reached' + ('' if vantage_los else ' (no clear line of sight on costmap)')
                 break
             failed_v.append(goal)
-        self.set_state('PHOTO', vantage=vantage)
-        self.photograph(est, st, kind, vantage, steps, hunt_s, vantage_los=vantage_los)
+        self.wait_still()
+        heard = self.listen_at_viewpoint(tracker, self.cfg['vantage_listen_sec']) if vantage.startswith('reached') else None
+        self.set_state('PHOTO', vantage=vantage, heard_here=heard)
+        shot = self.photograph(tracker, vantage)
+        if not shot['found'] and heard == 0:
+            # not seen and not heard: give it the longest pause a frog takes before deciding it is not there
+            heard = self.listen_at_viewpoint(tracker, self.cfg['vantage_confirm_sec'], enough=2)
+            if heard:
+                shot = self.photograph(tracker, vantage)
+        return self.record(tracker, shot, vantage, vantage_los, None if heard is None else heard > 0, steps, hunt_s)
+
+    def wait_still(self):
+        """Nav2 reports a goal as reached while the robot is still turning (about 1 rad/s): wait until it stands."""
+        t_end = self.now() + float(self.cfg['still_wait_sec'])
+        while rclpy.ok() and self.now() < t_end and not self._is_stationary():
+            self._check_safety_abort()
+            time.sleep(0.05)
+
+    def listen_at_viewpoint(self, tracker, max_sec, enough=3):
+        """Collect bearings at the viewpoint, where a frog is loud and a bearing is worth centimetres. Only bearings that
+        are the frog at the fix refine it (tracker.refine); the others are banked. Returns how many were it (stops after
+        `enough`)."""
+        p = self.pose()
+        tracker.at_place((p[0], p[1]), self.now())
+        self._take_inbox()
+        self.collecting = True
+        heard, other, t_end = 0, [], self.now() + float(max_sec)
+        while rclpy.ok() and self.now() < t_end and heard < enough:
+            self._check_safety_abort()
+            new = self._take_inbox()
+            used = tracker.refine(new, (p[0], p[1]))
+            heard += len(used)
+            other += [o for o in new if not any(o is u for u in used)]
+            time.sleep(0.1)
+        self.collecting = False
+        with self.lock:
+            self.passive_obs = (self.passive_obs + other)[-400:]
+        tri = tracker.triangulate()
+        self.show_hunt(tracker.obs, tri, (tracker.anchor[1], tracker.anchor[2]))
+        self.store.log_event('viewpoint_listen', t=round(self.now(), 1), heard=heard, others=len(other),
+                             est=[round(v, 3) for v in tri['pos']], unc_m=tri['uncertainty_m'])
+        return heard
+
+    def frog_point(self, tri):
+        """(x, y, z, kind) to aim at and to record. A frog that is not clearly perched sits on the ground the robot
+        measured there; the array's own height estimate is off by decimetres."""
+        est = tri['pos']
+        p = self.pose()
+        g = self.ground_z(est[0], est[1])
+        base = p[2] if g is None else g
+        kind = sp.classify_height(est[2], base, self.cfg['elevated_threshold_m'])
+        z = est[2] if kind == 'elevated' or g is None else g + 0.05
+        return float(est[0]), float(est[1]), float(z), kind
+
 
     def aim(self, est):
+        """Point the camera at est and make sure it does: the aim is computed from one pose, so a robot that still turned
+        (or was corrected) while the camera moved leaves it pointing somewhere else."""
+        for attempt in range(4):
+            self.wait_still()
+            self._aim_once(est)
+            p = self.pose(quiet=True)
+            err = 0.0 if p is None else math.degrees(abs(sp.pan_error((p[0], p[1]), p[3], self.pt_state.x, est)))
+            if err <= float(self.cfg['aim_tolerance_deg']):
+                return
+            self.get_logger().info(f'camera is {err:.0f} deg off after aiming: aiming again')
+
+    def _aim_once(self, est):
         ps = PointStamped()
         ps.header.frame_id = self.gf
         ps.header.stamp = self.get_clock().now().to_msg()
@@ -1446,7 +1664,10 @@ class CoquiSurveyNode(Node):
             time.sleep(0.05)
         return None if self.image is None else self.bridge.imgmsg_to_cv2(self.image, desired_encoding='bgr8')
 
-    def photograph(self, est, st, kind, vantage, steps, hunt_s, vantage_los=False):
+    def photograph(self, tracker, vantage):
+        """Aim at the fix, search a little around it, centre on the frog when it is seen."""
+        x, y, z, kind = self.frog_point(tracker.triangulate())
+        est = (x, y, z)
         self.aim(est)
         pan0, tilt0 = self.pt_state.x, self.pt_state.y
         offs = self.cfg['camera_scan_offsets']
@@ -1471,8 +1692,15 @@ class CoquiSurveyNode(Node):
                 f2, b2, c2, _ = detect_coqui(img2)
                 if f2:
                     img, bbox, centre = img2, b2, c2
+        return {'found': found, 'img': img, 'bbox': bbox, 'est': est, 'kind': kind}
+
+    def record(self, tracker, shot, vantage, vantage_los, heard_near, steps, hunt_s):
+        """Save the frog if it was seen, or heard well enough. Returns (recorded, why)."""
+        found, img, bbox, est, kind = (shot[k] for k in ('found', 'img', 'bbox', 'est', 'kind'))
+        st = tracker.triangulate()
         p = self.pose()
-        accept, accept_reason = sp.should_accept_record(st, found, vantage, vantage_los, self.grid(), self.cfg)
+        accept, accept_reason = sp.should_accept_record(st, found, vantage, vantage_los, self.grid(), self.cfg,
+                                                        heard_near=heard_near)
         if not accept:
             self.get_logger().warn(
                 f'Rejecting unconfirmed frog fix at {[round(float(v), 2) for v in est]} '
@@ -1481,13 +1709,14 @@ class CoquiSurveyNode(Node):
                                  est=[round(float(v), 3) for v in est], vantage=vantage, los=vantage_los)
             self.publish_markers(aim=None)
             self.point_camera(0.0, 0.0)
-            self.set_state('HUNT_END', outcome=f'rejected ({accept_reason})')
-            return
+            return False, accept_reason
         rec = {
             'pos': [round(float(v), 3) for v in est],
             'uncertainty_m': st.get('uncertainty_m'),
+            'source_level_db': st.get('source_level_db'),
             'height_class': kind,
             'visually_confirmed': bool(found),
+            'heard_at_viewpoint': heard_near,
             'accept_reason': accept_reason,
             'vantage': vantage,
             'acoustic': {'bearings_used': st.get('inliers'), 'bearings_heard': st.get('n_obs'),
@@ -1501,10 +1730,9 @@ class CoquiSurveyNode(Node):
             'mission_time_s': round(self.now() - self.t_start, 1),
             'wall_time': time.strftime('%Y-%m-%d %H:%M:%S'),
         }
-        if self.gps_ref is not None:
-            lat, lon, alt, ref_xy, ref_z = self.gps_ref
-            rec['lat'], rec['lon'] = [round(v, 8) for v in sp.local_to_latlon(lat, lon, ref_xy, est[:2])]
-            rec['alt_m'] = round(alt + (est[2] - ref_z), 2)
+        if self.geo_ref is not None:
+            lat, lon, mx, my, heading = self.geo_ref
+            rec['lat'], rec['lon'] = [round(v, 8) for v in sp.local_to_latlon(lat, lon, (mx, my), est[:2], heading)]
         fid = f'coqui_{len(self.store.frogs) + 1:03d}'
         rec['photo'] = None
         if img is not None:
@@ -1512,8 +1740,7 @@ class CoquiSurveyNode(Node):
                       (0, 255, 0) if found else (0, 180, 255)),
                      (f'map ({est[0]:.2f}, {est[1]:.2f}, {est[2]:.2f}) +/-{st.get("uncertainty_m", 0):.2f} m',
                       (235, 235, 235)),
-                     (f'lat/lon {rec.get("lat", "n/a")}, {rec.get("lon", "n/a")}   vantage: {vantage}',
-                      (235, 235, 235))]
+                     (f'vantage: {vantage}', (235, 235, 235))]
             out = annotate(img, found, bbox, lines)
             path = self.store.photo_path(fid)
             cv2.imwrite(path, out)
@@ -1529,11 +1756,12 @@ class CoquiSurveyNode(Node):
                 if not sp.bearing_points_at_known(
                     (float(r[1][0]), float(r[1][1])),
                     math.atan2(float(r[2][1]), float(r[2][0])),
-                    self.known, br_radius)
+                    self.known, br_radius, loudness=r[3], cfg=self.cfg)
             ]
         self.publish_markers(aim=None)   # RViz: the new frog; the camera stops aiming at it
         self.point_camera(0.0, 0.0)
         self.set_state('RECORDED', id=fid, pos=rec['pos'], visual=found, vantage=vantage)
+        return True, accept_reason
 
     # ------------------------------------------------------------------------------------- markers
     def publish_markers(self, **changes):
