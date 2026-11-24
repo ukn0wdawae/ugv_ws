@@ -33,7 +33,9 @@ def rp(q):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', required=True)
-    ap.add_argument('--goals', nargs='+', required=True, help='list of x,y world coordinates')
+    ap.add_argument('--goals', nargs='+', required=True, help='list of x,y map/world coordinates')
+    ap.add_argument('--input-frame', default='map', choices=['map', 'odom'],
+                    help='frame of --goals (default: map; use odom for legacy world-odom worlds)')
     ap.add_argument('--timeout', type=float, default=180.0, help='per-goal sim-time timeout (s)')
     args = ap.parse_args()
     goals = [tuple(float(v) for v in g.split(',')) for g in args.goals]
@@ -73,17 +75,20 @@ def main():
         g.pose.header.frame_id = 'map'
         cx, cy = (track[-1][1], track[-1][2]) if track else (gx, gy)
         yaw = math.atan2(gy - cy, gx - cx)
-        try:
-            tf = tfb.lookup_transform('map', 'odom', Time())
-            q = tf.transform.rotation
-            th = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            tx, ty = tf.transform.translation.x, tf.transform.translation.y
-        except Exception:
-            tx, ty, th = 0.0, 0.0, 0.0
-        mx = tx + math.cos(th) * gx - math.sin(th) * gy
-        my = ty + math.sin(th) * gx + math.cos(th) * gy
+        if args.input_frame == 'odom':
+            try:
+                tf = tfb.lookup_transform('map', 'odom', Time())
+                q = tf.transform.rotation
+                th = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+                tx, ty = tf.transform.translation.x, tf.transform.translation.y
+            except Exception:
+                tx, ty, th = 0.0, 0.0, 0.0
+            mx = tx + math.cos(th) * gx - math.sin(th) * gy
+            my = ty + math.sin(th) * gx + math.cos(th) * gy
+            yaw += th
+        else:
+            mx, my = gx, gy
         g.pose.pose.position.x, g.pose.pose.position.y = mx, my
-        yaw += th
         g.pose.pose.orientation.z, g.pose.pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
 
         i0 = len(track)
