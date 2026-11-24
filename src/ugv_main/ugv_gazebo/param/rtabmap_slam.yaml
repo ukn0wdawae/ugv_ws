@@ -20,7 +20,7 @@
     approx_sync_max_interval: 0.10
     topic_queue_size: 30
     sync_queue_size: 30
-    queue_size: 30
+    Mem/DepthCompressionFormat: ".png"
 
     # Publish 2D occupancy grid (/map) and use GPS fixes (/gps/fix) to filter loop closures
     RGBD/CreateOccupancyGrid: "true"

@@ -20,8 +20,8 @@ def _setup(context):
 
     acts = [
         Node(
-            package='gazebo_ros',
-            executable='spawn_entity.py',
+            package='ugv_gazebo',
+            executable='spawn_entity_clean.py',
             arguments=[
                 '-entity', UGV_MODEL,
                 '-file', sdf_path,

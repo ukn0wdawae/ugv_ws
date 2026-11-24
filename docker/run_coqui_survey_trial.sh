@@ -13,6 +13,10 @@
 # Output: /root/ugv_ws/coqui_surveys/<run_id>/ (survey.yaml, frogs.geojson, photos/, events.jsonl,
 #         launch.log, grade.json, truth_used.yaml)
 set -eo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/latest-scripts/_cleanup_lib.sh"
+
 RUN=${1:-trial_$(date +%H%M%S)}
 SEED=${2:-0}
 MAXSEC=${3:-2400}
@@ -27,7 +31,7 @@ source /opt/ros/humble/setup.bash
 source /root/ugv_ws/install/setup.bash
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-77}
 export GAZEBO_MASTER_URI=${GAZEBO_MASTER_URI:-http://localhost:11399}
-export UGV_MODEL=ugv_pro_audio GAZEBO_MODEL_DATABASE_URI=""
+export UGV_MODEL=ugv_pro_audio GAZEBO_MODEL_DATABASE_URI="" ALSOFT_DRIVERS="${ALSOFT_DRIVERS:-null}"
 
 # Refuse to run if stale nodes exist in this trial ROS domain
 STALE=$(timeout 4 ros2 node list 2>/dev/null | grep -E '^/(coqui_sound_emitter|coqui_survey|bt_navigator)$' || true)
@@ -40,7 +44,7 @@ TRUTH_ARGS=()
 GRADE_TRUTH_ARGS=(--profile "$PROFILE")
 if [ "$RANDOMIZE" = "true" ] && [ "$SEED" != "0" ]; then
   TRUTH_OUT="$OUT/truth_used.yaml"
-  TRUTH_ARGS+=(randomize:=true "truth_out:=$TRUTH_OUT")
+  TRUTH_ARGS+=(randomize:=true randomize_spawn:=true "truth_out:=$TRUTH_OUT")
   GRADE_TRUTH_ARGS=(--truth "$TRUTH_OUT")
   # The randomized spawn is where the operator puts the robot down: tell the robot that, not the profile's trailhead
   # (otherwise its whole map, and every frog in it, is shifted by the difference).
@@ -53,16 +57,17 @@ truth = yaml.safe_load(open(os.path.join(share('ugv_audio'), 'config', 'sim_trut
 prof = yaml.safe_load(open(os.path.join(share('ugv_coqui_behavior'), 'config', 'profiles', f'{profile}.yaml')))
 area = prof['survey']['coqui_survey']['ros__parameters']['survey_area']
 s = randomize_truth_scenario(truth, seed, survey_area=area)['spawn']
-print(f'init_x:={s[0]} init_y:={s[1]} init_yaw:={s[3]}')
+print(f'init_x:={s[0]} init_y:={s[1]} init_z:={s[2]} init_yaw:={s[3]}')
 PY
 ))
 fi
 
 echo "trial $RUN profile=$PROFILE seed=$SEED randomize=$RANDOMIZE max=${MAXSEC}s localization=$LOC domain=$ROS_DOMAIN_ID"
+ugv_init_launch_cleanup "coqui_trial" "$ROS_DOMAIN_ID"
 setsid ros2 launch ugv_coqui_behavior coqui_survey.launch.py profile:="$PROFILE" sim:=true gui:=false seed:="$SEED" \
   run_id:="$RUN" max_mission_sec:="$MAXSEC" localization:="$LOC" "${TRUTH_ARGS[@]}" "$@" > "$OUT/launch.log" 2>&1 &
 PID=$!
-trap 'kill -INT -- -$PID 2>/dev/null; sleep 5; kill -9 -- -$PID 2>/dev/null; true' EXIT
+UGV_LAUNCH_PID=$PID
 
 # wait for the mission to finish (DONE in survey.yaml) or the wall-clock budget (sim may run < 1x)
 WALL_LIMIT=$(( MAXSEC * 3 + 600 ))

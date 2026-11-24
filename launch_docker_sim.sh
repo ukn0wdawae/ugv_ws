@@ -41,14 +41,16 @@ docker build -t "$IMAGE" "$WS/docker"
 echo "==> Recreate container (GPU=$GPU)"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" \
+  --init \
   --label "ugv.gpu=$GPU" \
   --network host \
-  --ipc host \
+  --shm-size=2g \
   "${GPU_ARGS[@]}" \
   -e DISPLAY="${DISPLAY:-:0}" \
   -e XDG_RUNTIME_DIR=/tmp/runtime-root \
   -e UGV_MODEL="$MODEL" \
   -e GAZEBO_MODEL_DATABASE_URI="" \
+  -e ALSOFT_DRIVERS=null \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "$WS":/root/ugv_ws \
   -w /root/ugv_ws \

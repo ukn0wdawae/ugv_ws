@@ -199,9 +199,6 @@ local_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 4.0
           obstacle_min_range: 0.2
-      static_layer:
-        plugin: nav2_costmap_2d::StaticLayer
-        map_subscribe_transient_local: true
       always_send_full_costmap: true
 global_costmap:
   global_costmap:
@@ -278,7 +275,7 @@ global_costmap:
       height: 50
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 20.0
+    expected_planner_frequency: 5.0
     use_sim_time: true
     planner_plugins:
     - GridBased

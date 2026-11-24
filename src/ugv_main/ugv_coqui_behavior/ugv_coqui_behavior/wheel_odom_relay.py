@@ -46,12 +46,16 @@ class WheelOdomRelay(Node):
 
 
 def main(args=None):
+    from rclpy._rclpy_pybind11 import RCLError
     rclpy.init(args=args)
     node = WheelOdomRelay()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RCLError:
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
         if rclpy.ok():

@@ -284,6 +284,7 @@ class SurveyVizAids(Node):
 
 
 def main(args=None):
+    from rclpy._rclpy_pybind11 import RCLError
     rclpy.init(args=args)
     node = SurveyVizAids()
     ex = MultiThreadedExecutor(num_threads=4)
@@ -292,6 +293,9 @@ def main(args=None):
         ex.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass  # Ctrl-C / launch shutdown: exit cleanly
+    except RCLError:
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
         if rclpy.ok():

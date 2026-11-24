@@ -16,10 +16,14 @@
 # Grade a finished run against the simulation truth:
 #   ros2 run ugv_coqui_behavior eval_survey /root/ugv_ws/coqui_surveys/<run_id>/survey.yaml --profile <profile>
 set -eo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_cleanup_lib.sh"
+
 cd /root/ugv_ws
 source /opt/ros/humble/setup.bash
 source /root/ugv_ws/install/setup.bash
-export UGV_MODEL=ugv_pro_audio
+export UGV_MODEL=ugv_pro_audio ALSOFT_DRIVERS="${ALSOFT_DRIVERS:-null}"
 DOMAIN=${ROS_DOMAIN_ID:-0}
 SESSION_FILE="/tmp/coqui_sim_session_${DOMAIN}.env"
 
@@ -48,13 +52,13 @@ if [ -f "$SESSION_FILE" ]; then
     echo "Use: ./docker/latest-scripts/run_coqui_survey.sh profile:=${SIM_PROFILE}"
     exit 1
   elif [ "$HAS_PROFILE" -eq 0 ] && [ -n "${SIM_PROFILE:-}" ]; then
-    echo "Auto-selecting profile:=${SIM_PROFILE} to match Terminal 1."
+    echo "Auto-selecting profile:=${SIM_PROFILE} to match Terminal 1 (seed=${SIM_SEED:-?}, randomize=${SIM_RANDOMIZE:-?})."
     EXTRA_ARGS+=("profile:=${SIM_PROFILE}")
   fi
 fi
 
 # 3) Check no stale robot-side nodes are already running in this ROS domain
-STALE=$(timeout 4 ros2 node list 2>/dev/null | grep -E '^/(coqui_survey|bt_navigator|terrain_traversability|ekf_filter_node|rtabmap)$' || true)
+STALE=$(timeout 4 ros2 node list 2>/dev/null | grep -E '^/(coqui_survey|bt_navigator|terrain_traversability|lidar_localizer|ekf_filter_node|rtabmap)$' || true)
 if [ -n "$STALE" ]; then
   echo "Stale robot-side ROS nodes are still running in ROS_DOMAIN_ID=${DOMAIN}:"
   echo "$STALE"
@@ -62,4 +66,17 @@ if [ -n "$STALE" ]; then
   exit 1
 fi
 
-exec ros2 launch ugv_coqui_behavior coqui_survey.launch.py rviz:=true "${EXTRA_ARGS[@]}" "$@"
+# Ensure robot_pose_publisher is built if localization:=slam is requested
+for arg in "$@"; do
+  if [ "$arg" = "localization:=slam" ] && ! ros2 pkg prefix robot_pose_publisher >/dev/null 2>&1; then
+    echo "Building robot_pose_publisher for localization:=slam ..."
+    colcon build --symlink-install --packages-select robot_pose_publisher
+    source /root/ugv_ws/install/setup.bash
+    break
+  fi
+done
+
+WATCH_SESSION=""
+[ -f "$SESSION_FILE" ] && WATCH_SESSION="$SESSION_FILE"
+ugv_init_launch_cleanup "coqui_bot" "$DOMAIN" "" "$WATCH_SESSION"
+ugv_run_foreground ros2 launch ugv_coqui_behavior coqui_survey.launch.py rviz:=true "${EXTRA_ARGS[@]}" "$@"

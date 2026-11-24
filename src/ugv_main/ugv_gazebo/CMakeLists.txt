@@ -10,6 +10,10 @@ install(DIRECTORY rviz launch urdf worlds models param maps
     DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS scripts/spawn_entity_clean.py
+    DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_export_dependencies(ament_cmake)
 ament_export_dependencies(ament_cmake_python)
 ament_export_dependencies(rosidl_default_generators)

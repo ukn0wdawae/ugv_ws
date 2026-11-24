@@ -1,19 +1,21 @@
 """SIMULATION side of the Coqui survey: Gazebo world with the frogs + robot + the frogs' calls.
 
     ros2 launch ugv_coqui_behavior coqui_survey_sim.launch.py [profile:=forest|hill]
-         [gui:=true] [follow:=false] [show_truth:=false] [seed:=0] [randomize:=false]
-         [motor_noise_gain:=0.06] [overlap_prob:=0.25] [echo_gain:=0.12]
+         [gui:=true] [follow:=false] [show_truth:=false] [seed:=auto|<N>] [randomize:=true|false]
+         [randomize_spawn:=false] [motor_noise_gain:=0.06] [overlap_prob:=0.25] [echo_gain:=0.12]
          [schedule:=chorus|turns] [call_variation:=true]
          [x:= y:= z:= yaw:=]
 
 This is "the world". The robot stack (coqui_survey.launch.py) runs separately and never reads the
-truth file used here, nor anything published under /sim/. When `randomize:=true` (with `seed != 0`),
-frog positions and robot spawn pose are deterministically randomized into a temporary world and truth
-file so repeated evaluations are not overfitted to a single layout.
+truth file used here, nor anything published under /sim/. By default (`randomize:=true`, `seed:=auto`),
+every launch generates a fresh random seed and places frogs across real 3D bushes, tree crowns/trunks,
+tall grass, and glades in a temporary world and truth file. Pass `seed:=<N>` to replay a specific layout,
+or `randomize:=false` for the static canonical truth file.
 """
 import math
 import os
 import re
+import secrets
 import tempfile
 
 import yaml
@@ -57,7 +59,7 @@ def _rewrite_world_frogs(world_path, truth_doc):
     frogs_xml = []
     for fr in truth_doc.get('frogs', []):
         x, y, z = fr['pos']
-        yaw = math.atan2(spawn[1] - y, spawn[0] - x)
+        yaw = float(fr['yaw']) if 'yaw' in fr else math.atan2(spawn[1] - y, spawn[0] - x)
         frogs_xml.append(
             f'\n    <include>\n'
             f'      <name>{fr["id"]}</name>\n'
@@ -81,11 +83,14 @@ def setup(context):
     beh = get_package_share_directory('ugv_coqui_behavior')
     bring = os.path.join(ugv, 'launch', 'bringup')
 
-    # model paths (same as bringup_forest.launch.py)
+    # model paths (same as bringup_forest.launch.py; avoid adding install/ugv_description/share
+    # when ~/.gazebo/models/ugv_description exists so gzclient does not warn on ament_index/colcon-core)
     ws_root = os.path.abspath(os.path.join(ugv, '..', '..', '..', '..'))
-    extra = [os.path.dirname(get_package_share_directory('ugv_description')),
-             os.path.join(ws_root, 'gazebo_models'), '/root/ugv_ws/gazebo_models',
-             os.path.expanduser('~/.gazebo/models'), os.path.join(ugv, 'models')]
+    gz_models_home = os.path.expanduser('~/.gazebo/models')
+    extra = [os.path.join(ws_root, 'gazebo_models'), '/root/ugv_ws/gazebo_models',
+             gz_models_home, os.path.join(ugv, 'models')]
+    if not os.path.isdir(os.path.join(gz_models_home, 'ugv_description')):
+        extra.insert(0, os.path.dirname(get_package_share_directory('ugv_description')))
     parts = [p for p in os.environ.get('GAZEBO_MODEL_PATH', '').split(':') if p]
     for p in reversed(extra):
         if os.path.isdir(p) and p not in parts:
@@ -94,31 +99,60 @@ def setup(context):
     os.environ['GAZEBO_MODEL_DATABASE_URI'] = ''
 
     profile = lc('profile') or 'forest'
-    seed = int(lc('seed'))
     randomize = lc('randomize').strip().lower() in ('true', '1', 'yes')
+    randomize_spawn = lc('randomize_spawn').strip().lower() in ('true', '1', 'yes')
+    seed_raw = lc('seed').strip().lower()
+    if randomize:
+        if seed_raw in ('', 'auto', '0'):
+            seed = secrets.randbelow(900000) + 100000
+        else:
+            seed = int(seed_raw)
+    else:
+        seed = 0 if seed_raw in ('', 'auto') else int(seed_raw)
+
     audio_share = get_package_share_directory('ugv_audio')
     truth_file = lc('truth_file') or os.path.join(audio_share, 'config', 'sim_truth', f'{profile}_survey.yaml')
     world = lc('world') or os.path.join(ugv, 'worlds', f'{profile}_coqui_survey.world')
 
     spawn = [48.0, 2.1, 2.75, -3.13]
     t_doc = yaml.safe_load(open(truth_file)) if os.path.isfile(truth_file) else {}
-    if randomize and seed != 0 and t_doc:
+    domain = os.environ.get('ROS_DOMAIN_ID', '0').strip() or '0'
+    latest_truth_domain = f'/tmp/coqui_latest_truth_{profile}_d{domain}.yaml'
+    if randomize and t_doc:
         prof_path = os.path.join(beh, 'config', 'profiles', f'{profile}.yaml')
         survey_area = None
         if os.path.isfile(prof_path):
             pdoc = yaml.safe_load(open(prof_path)) or {}
             survey_area = pdoc.get('survey', {}).get('coqui_survey', {}).get('ros__parameters', {}).get('survey_area')
-        t_doc = randomize_truth_scenario(t_doc, seed, survey_area=survey_area)
+        # Keep trailhead spawn aligned with Terminal 2's static EKF map->odom unless randomize_spawn:=true
+        t_doc = randomize_truth_scenario(
+            t_doc, seed, survey_area=survey_area,
+            spawn_jitter_m=(1.5 if randomize_spawn else 0.0),
+        )
         truth_out = lc('truth_out').strip()
         if truth_out:
             os.makedirs(os.path.dirname(os.path.abspath(truth_out)), exist_ok=True)
-            yaml.safe_dump(t_doc, open(truth_out, 'w'), sort_keys=False)
+            with open(truth_out, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(t_doc, f, sort_keys=False)
             truth_file = truth_out
         else:
             fd, truth_file = tempfile.mkstemp(prefix=f'coqui_truth_{profile}_s{seed}_', suffix='.yaml')
-            with os.fdopen(fd, 'w') as f:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 yaml.safe_dump(t_doc, f, sort_keys=False)
         world = _rewrite_world_frogs(world, t_doc)
+    elif t_doc:
+        truth_out = lc('truth_out').strip()
+        if truth_out:
+            os.makedirs(os.path.dirname(os.path.abspath(truth_out)), exist_ok=True)
+            with open(truth_out, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(t_doc, f, sort_keys=False)
+
+    if t_doc:
+        try:
+            with open(latest_truth_domain, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(t_doc, f, sort_keys=False)
+        except OSError:
+            pass
 
     if t_doc and 'spawn' in t_doc and len(t_doc['spawn']) >= 4:
         spawn = t_doc['spawn']
@@ -126,11 +160,17 @@ def setup(context):
     sy = lc('y') or str(spawn[1])
     sz = lc('z') or str(spawn[2])
     syaw = lc('yaw') or str(spawn[3])
+    frog_summary = '\n'.join(
+        f'  {fr["id"]}: pos={fr["pos"]}  [{fr.get("habitat", "")}]'
+        for fr in (t_doc.get('frogs', []) if t_doc else [])
+    )
     acts = [
         LogInfo(msg=f'[coqui_survey_sim] profile={profile} seed={seed} randomize={randomize} '
-                    f'world={world} truth={truth_file} spawn=({sx}, {sy}, {sz}, {syaw})'),
+                    f'world={world} truth={truth_file} spawn=({sx}, {sy}, {sz}, {syaw})\n'
+                    f'{frog_summary}'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(gz, 'launch', 'gzserver.launch.py')),
-                                 launch_arguments={'world': world, 'verbose': 'false'}.items()),
+                                 launch_arguments={'world': world, 'verbose': 'false',
+                                                   'profile': '', 'seed': str(seed)}.items()),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(bring, 'robot_state_publisher.launch.py')),
                                  launch_arguments={'use_sim_time': 'true'}.items()),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(bring, 'spawn_ugv.launch.py')),
@@ -156,7 +196,8 @@ def setup(context):
     ]
     if lc('gui') == 'true':
         acts.append(IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(gz, 'launch', 'gzclient.launch.py'))))
+            PythonLaunchDescriptionSource(os.path.join(gz, 'launch', 'gzclient.launch.py')),
+            launch_arguments={'gui_required': 'true'}.items()))
         if lc('follow') == 'true':
             acts.append(ExecuteProcess(
                 cmd=['bash', '-c', FOLLOW_SCRIPT, 'gazebo_follow', ROBOT_MODEL, str(FOLLOW_TIMEOUT_SEC)],
@@ -178,9 +219,12 @@ def generate_launch_description():
                               description='with gui:=true, the Gazebo GUI camera follows the robot'),
         DeclareLaunchArgument('show_truth', default_value='true',
                               description='draw true frog positions on /sim/coqui_truth_markers (viewer only)'),
-        DeclareLaunchArgument('seed', default_value='0', description='random seed for schedule & layout'),
-        DeclareLaunchArgument('randomize', default_value='false',
-                              description='when true and seed != 0, randomize frog positions and spawn pose'),
+        DeclareLaunchArgument('seed', default_value='auto',
+                              description='random seed for schedule & layout ("auto" generates a new seed each run)'),
+        DeclareLaunchArgument('randomize', default_value='true',
+                              description='when true (default), place frogs at randomized 3D bush/tree/ground spots'),
+        DeclareLaunchArgument('randomize_spawn', default_value='false',
+                              description='also perturb robot trailhead spawn pose (keep false unless syncing init_x/y/yaw)'),
         DeclareLaunchArgument('motor_noise_gain', default_value='0.06',
                               description='motor self-noise amplitude proportional to wheel velocity'),
         DeclareLaunchArgument('overlap_prob', default_value='0.25',

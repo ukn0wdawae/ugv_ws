@@ -50,8 +50,8 @@ def launch_setup(context, *args, **kwargs):
         param_file,
         {
             'use_sim_time': use_sim_time,
-            'queue_size': queue_size,
             'sync_queue_size': queue_size,
+            'topic_queue_size': queue_size,
             'qos_image': qos,
             'qos_camera_info': qos,
             'qos_imu': qos,
@@ -135,6 +135,8 @@ def launch_setup(context, *args, **kwargs):
             output='screen',
             arguments=['-d', rviz_slam_3d_config],
             parameters=[{'use_sim_time': use_sim_time}],
+            sigterm_timeout='1',
+            sigkill_timeout='2',
         ))
     elif use_rtabmap_viz:
         nodes.append(Node(
