@@ -87,7 +87,12 @@ class RollingElevationMap:
         m = np.abs(dz) < 0.08
         if int(m.sum()) < 20:
             return 0.0, 0.0, 0.0
-        X = np.stack([dx[m], dy[m], np.ones(int(m.sum()), dtype=np.float64)], axis=1)
+        # Require 2D spatial spread (reject narrow front-only depth-camera wedges where dx and 1 are collinear)
+        dxm, dym = dx[m], dy[m]
+        cov = np.cov(dxm, dym)
+        if cov.shape != (2, 2) or float(np.linalg.eigvalsh(cov)[0]) < 0.15:
+            return 0.0, 0.0, 0.0
+        X = np.stack([dxm, dym, np.ones(int(m.sum()), dtype=np.float64)], axis=1)
         y = dz[m]
         w = np.ones_like(y)
         sol = np.zeros(3, dtype=np.float64)
@@ -152,6 +157,26 @@ class RollingElevationMap:
         self.hits.ravel()[uniq] += cnt.astype(np.int32)
         return len(uniq)
 
+    def ground_height_at(self, x, y, normal=None, r_min=0.18, r_max=0.65, min_cells=15):
+        """Robustly estimate the map's ground elevation directly under (x, y) from a nearby ring.
+
+        Projects surrounding known map heights back to (x, y) along the robot's ground plane and
+        takes the median (immune to adjacent trunks/bushes), allowing 2D-odometry z_est to stay
+        anchored to the elevation map without open-loop drift on rolling terrain and side-slopes.
+        """
+        if self.origin is None:
+            return None
+        X, Y = self.cell_centers()
+        r2 = (X - float(x)) ** 2 + (Y - float(y)) ** 2
+        m = np.isfinite(self.h) & (r2 >= float(r_min) ** 2) & (r2 <= float(r_max) ** 2)
+        if int(m.sum()) < int(min_cells):
+            return None
+        z_proj = self.h[m]
+        if normal is not None and float(normal[2]) > 0.5:
+            z_proj = z_proj + (float(normal[0]) * (X[m] - float(x)) +
+                               float(normal[1]) * (Y[m] - float(y))) / float(normal[2])
+        return float(np.median(z_proj))
+
     def set_footprint(self, x, y, z, radius, stamp, normal=None):
         """Mark cells under the robot as ground: the plane the robot stands on, through (x, y, z) with
         the robot's up axis `normal` (flat if None). A flat disc on a side slope is centimetres off the
@@ -163,10 +188,11 @@ class RollingElevationMap:
         zp = np.full(int(m.sum()), z, dtype=float)
         if normal is not None and normal[2] > 0.5:
             zp = z - (normal[0] * (X[m] - x) + normal[1] * (Y[m] - y)) / normal[2]
-        # only lower obstacles that would be impossible under the robot; keep
-        # real measurements that agree with the footprint height
+        # Only fill unknown (NaN) cells or LOWER impossible obstacles sticking > 3 cm ABOVE the
+        # robot's underside; never RAISE clean measured ground into a fake step plateau when z_est drifts.
         cur = self.h[m]
-        self.h[m] = np.where(np.isfinite(cur) & (np.abs(cur - zp) < 0.03), cur, zp)
+        keep = np.isfinite(cur) & (cur <= zp + 0.03) & (cur >= zp - 0.15)
+        self.h[m] = np.where(keep, cur, zp)
         self.stamp[m] = stamp
 
     def expire(self, now):

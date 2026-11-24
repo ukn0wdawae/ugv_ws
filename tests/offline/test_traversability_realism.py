@@ -150,3 +150,24 @@ def test_global_cost_grid_caps_non_lethal_and_keeps_unseen_unknown():
     g.update_from_local(X, Y, local)
     assert int(g.data.max()) <= 90
     assert (g.data == -1).mean() > 0.90  # outside scanned patch stays unknown (-1)
+
+
+def test_footprint_never_raises_ground_into_fake_step_when_z_est_drifts():
+    """Regression for live forest drive stall at (42.0, 1.85) on an 8 deg side-slope:
+    when open-loop z_est drifted +5 cm above scanned ground, set_footprint raised real ground
+    cells up to z_est, stamping a fake 5 cm lethal curb directly behind the wheels."""
+    m = RollingElevationMap(length=4.0, resolution=0.05, alpha=1.0)
+    m.move_to(0.0, 0.0)
+    X, Y = m.cell_centers()
+    slope = np.tan(np.radians(8.0))
+    m.h[:, :] = 0.070 + slope * Y
+    m.stamp[:, :] = 1.0
+    normal = np.array([0.0, -np.sin(np.radians(8.0)), np.cos(np.radians(8.0))])
+
+    z_map = m.ground_height_at(0.0, 0.0, normal=normal)
+    assert z_map is not None and abs(z_map - 0.070) < 0.005
+
+    m.set_footprint(0.0, 0.0, 0.123, 0.12, 2.0, normal=normal)
+    L = compute_traversability(m.h, TraversabilityParams(step_outlier_trim=1))
+    near = (np.hypot(X, Y) < 1.0) & (L['cost'] >= 0)
+    assert int((L['cost'][near] >= 100).sum()) == 0, 'set_footprint stamped a fake lethal curb on drifted z_est'

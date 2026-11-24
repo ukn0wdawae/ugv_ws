@@ -111,6 +111,7 @@ class TraversabilityNode(Node):
         self.imu_buf = deque(maxlen=250)  # (stamp_s, roll, pitch) for time-aligned attitude lookup
         self.z_est = 0.0
         self.last_xy = None
+        self.last_z_stamp = -1.0
         self.odom_is_3d = False
         self.tf_z0 = None
         self.last_pose = None  # (stamp_msg, T_fixed_robot_compensated, T_fixed_robot_tf)
@@ -203,7 +204,7 @@ class TraversabilityNode(Node):
                 self.get_logger().warn(f'TF {target}<-{source}: {e}', throttle_duration_sec=5.0)
                 return None
 
-    def robot_pose(self, stamp, exact=False):
+    def robot_pose(self, stamp, exact=False, update_z=False):
         """(T_compensated, T_tf, tf_msg).  With use_imu_attitude the 2D odometry pose is
         upgraded to 3D using IMU roll/pitch and integrated height."""
         tfm = self.lookup(self.fixed_frame, self.robot_frame, stamp, exact=exact)
@@ -227,12 +228,16 @@ class TraversabilityNode(Node):
         _, _, yaw = rot_to_rpy(T_tf[:3, :3])
         roll, pitch = rp
         R = rpy_to_rot(roll, pitch, yaw)
-        if self.last_xy is not None:
-            dxy = np.array([x, y]) - self.last_xy
-            s = dxy @ np.array([np.cos(yaw), np.sin(yaw)])  # signed wheel travel
-            if abs(s) < 1.0:  # ignore jumps (re-localisation)
-                self.z_est += s * R[2, 0] / max(np.hypot(R[0, 0], R[1, 0]), 1e-3)
-        self.last_xy = np.array([x, y])
+        t_s = stamp.nanoseconds * 1e-9
+        if update_z and t_s >= self.last_z_stamp:
+            if self.last_xy is not None:
+                dxy = np.array([x, y]) - self.last_xy
+                n = R[:, 2]
+                # Full 2D ground-plane dz (handles both pitch climbs and lateral motion on roll side-slopes)
+                if n[2] > 0.5 and float(np.hypot(dxy[0], dxy[1])) < 1.0:
+                    self.z_est += -(float(n[0]) * float(dxy[0]) + float(n[1]) * float(dxy[1])) / float(n[2])
+            self.last_xy = np.array([x, y])
+            self.last_z_stamp = t_s
         T = np.eye(4)
         T[:3, :3] = R
         T[:3, 3] = (x, y, T_tf[2, 3] + self.z_est)
@@ -273,7 +278,7 @@ class TraversabilityNode(Node):
                 return
             self.static_cache[key] = transform_to_matrix(tf_rs.transform)
         T_rs = self.static_cache[key]
-        pose = self.robot_pose(Time.from_msg(msg.header.stamp), exact=self.exact_pose)
+        pose = self.robot_pose(Time.from_msg(msg.header.stamp), exact=self.exact_pose, update_z=True)
         if pose is None:
             return
         T_fr, T_tf, tfm = pose
@@ -295,8 +300,19 @@ class TraversabilityNode(Node):
         self.map.insert(pts_f, stamp, sensor_xy=(T_fr[0, 3], T_fr[1, 3]),
                         range_weight_scale=self.range_weight_scale,
                         stabilize_attitude=self.stabilize_attitude)
-        self.map.set_footprint(T_fr[0, 3], T_fr[1, 3], zr, self.footprint_radius, stamp,
-                               normal=T_fr[:3, 2] if self.footprint_follow_slope else None)
+        # Anchor open-loop 2D-odometry z_est to the elevation map's measured ground height around the robot
+        # so z_est never drifts above/below scanned ground and creates a fake step behind the wheels.
+        normal = T_fr[:3, 2] if self.footprint_follow_slope else None
+        zr_foot = zr
+        if self.use_imu_attitude and not self.odom_is_3d:
+            z_map = self.map.ground_height_at(T_fr[0, 3], T_fr[1, 3], normal=normal)
+            if z_map is not None:
+                z_err = z_map - zr
+                if abs(z_err) < 0.20:
+                    self.z_est += 0.25 * float(np.clip(z_err, -0.04, 0.04))
+                    zr_foot = z_map
+        self.map.set_footprint(T_fr[0, 3], T_fr[1, 3], zr_foot, self.footprint_radius, stamp,
+                               normal=normal)
         self.last_pose = (tfm.header.stamp, T_fr, T_tf)
         self.stats['clouds'] += 1
         self.frames_seen[frame] = self.frames_seen.get(frame, 0) + 1
