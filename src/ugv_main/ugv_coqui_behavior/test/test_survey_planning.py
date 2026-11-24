@@ -315,3 +315,136 @@ def test_baseline_steps_prefer_ground_already_seen_free():
     assert cands and all(c[0] <= 0.6 for _, c in cands)
     anyc = sp.baseline_step_candidates((0.0, 0.0), (5.0, 0.0), [(0.0, 0.0)], g, CFG, allow_unknown=True)
     assert any(c[0] > 0.6 for _, c in anyc)
+
+
+# ----------------------------------------------------------------------- frontier & two-tier acoustics
+def test_frontier_candidates_cluster_heading_and_whisper_bias():
+    g = world(size=20.0, origin=(-10.0, -10.0))
+    g.data[:, :] = -1
+    # robot mapped a 6 m square around (0, 0), leaving frontiers to east (+x) and west (-x)
+    rect(g, -3.0, 3.0, -3.0, 3.0, val=0)
+    # obstacle blocking north and south borders
+    rect(g, -3.5, 3.5, 2.8, 3.5, val=100)
+    rect(g, -3.5, 3.5, -3.5, -2.8, val=100)
+    area = [-9.0, 9.0, -9.0, 9.0]
+    # facing east (yaw=0): east frontier wins via heading continuity
+    cands = sp.frontier_candidates((0.0, 0.0), 0.0, area, g, [], CFG)
+    assert len(cands) >= 2
+    assert cands[0][1][0] > 2.0
+    # weak Tier-1 whisper ray pointing west (pi): flips preference to west frontier!
+    biased = sp.frontier_candidates((0.0, 0.0), 0.0, area, g, [], CFG, weak_rays=[((0.0, 0.0), math.pi, 11.5)])
+    assert biased[0][1][0] < -2.0
+    assert sp.frontier_still_unknown(biased[0][1], g, 1.0)
+    # filtering to uncovered cells drops frontiers in already-covered areas (e.g. tree shadows)
+    west_only = sp.frontier_candidates((0.0, 0.0), 0.0, area, g, [], CFG,
+                                       uncovered_xy=[(-5.0, 0.0)], cover_radius=4.0)
+    assert west_only and all(xy[0] < 0.0 for _, xy, _ in west_only)
+
+
+def test_adaptive_baseline_steps_fit_tight_corridor_and_scale_with_range():
+    g = world()
+    # narrow 0.9 m corridor along x, walls at y = +-0.45
+    rect(g, -8.0, 8.0, 0.45, 8.0, val=100)
+    rect(g, -8.0, 8.0, -8.0, -0.45, val=100)
+    acfg = dict(CFG, clearance_m=0.18, adaptive_steps=True)
+    # close frog off to the side: nimble 0.45 m steps along the narrow corridor are offered
+    close_cands = sp.baseline_step_candidates((0.0, 0.0), (0.0, 2.5), [(0.0, 0.0)], g, acfg)
+    assert close_cands
+    dists = [math.hypot(c[0], c[1]) for _, c in close_cands]
+    assert min(dists) < 0.6
+    # distant frog (12 m): longer steps > 2.0 m are offered for faster parallax
+    far_cands = sp.baseline_step_candidates((0.0, 0.0), (0.0, 12.0), [(0.0, 0.0)], world(), acfg)
+    assert max(math.hypot(c[0], c[1]) for _, c in far_cands) > 2.2
+
+
+def test_passive_triangulation_catches_quiet_frog_while_ignoring_known():
+    rng = np.random.default_rng(7)
+    frog = (6.0, 3.0, 2.8)
+    obs = []
+    t = 0.0
+    for ox, oy in [(0.0, 0.0), (2.5, 0.0), (5.0, 0.0)]:
+        for _ in range(3):
+            o = np.array([ox, oy, 2.8])
+            d = bearing(o, frog, rng, 1.0)
+            obs.append((t, o, d, 11.8))  # quiet (< hunt_trigger_snr_db)
+            t += 0.5
+        t += 2.0  # distinct bouts
+    cfg = dict(CFG, known_frog_radius_m=2.0, bout_gap_s=1.2)
+    tri, anchor = sp.check_passive_triangulation(obs, [], cfg)
+    assert tri is not None and anchor is not None
+    assert math.hypot(tri['pos'][0] - frog[0], tri['pos'][1] - frog[1]) < 0.6
+    # once recorded as known, passive check ignores it
+    tri2, _ = sp.check_passive_triangulation(obs, [{'pos': list(frog)}], cfg)
+    assert tri2 is None
+
+
+def test_intrabount_moving_triangulation_and_area_boundary_margin():
+    rng = np.random.default_rng(11)
+    frog = (40.5, -2.5, 3.0)
+    # Single continuous calling bout (dt=0.75s < bout_gap_s=1.2s) while fast robot moves 2.7 m
+    O = [np.array([46.8 - 0.1 * k, 0.0 - 0.25 * k, 2.8]) for k in range(11)]
+    D = [bearing(o, frog, rng, 0.8) for o in O]
+    groups = sp.bout_ids([0.75 * k for k in range(11)], 1.2)
+    assert len(set(groups)) == 1
+    tri = sp.robust_triangulate(O, D, (O[0], D[0]), CFG, groups=groups)
+    assert tri is not None
+    assert math.hypot(tri['pos'][0] - frog[0], tri['pos'][1] - frog[1]) < 0.6
+    # Boundary safety margin keeps baseline steps and vantages strictly inside survey_area
+    g = world(size=30.0, origin=(30.0, -15.0))
+    bcfg = dict(CFG, survey_area=[30.0, 50.0, -15.0, 15.0], area_margin_m=1.2)
+    cands = sp.baseline_step_candidates((48.6, -6.0), (47.5, -9.0), [(48.6, -6.0)], g, bcfg)
+    assert cands and all(c[0] <= 48.8 + 1e-9 for _, c in cands)
+    vcands = sp.vantage_candidates((48.5, -6.0, 3.0), (46.0, -6.0), 'ground', g, bcfg)
+    assert vcands and all(v[0] <= 48.8 + 1e-9 for _, v, _, _ in vcands)
+    # Close-range elevation rays outweigh noisy distant rays in z estimation
+    elev_frog = (47.5, -9.5, 4.4)
+    O_far = [np.array([24.0 + 0.3 * k, -8.5, 3.5]) for k in range(6)]
+    D_far = [np.array([elev_frog[0] - o[0], elev_frog[1] - o[1], -1.5]) for o in O_far]
+    D_far = [d / np.linalg.norm(d) for d in D_far]
+    O_near = [np.array([46.5, -3.5 + 0.5 * k, 2.8]) for k in range(3)]
+    D_near = [bearing(o, elev_frog, rng, 0.2) for o in O_near]
+    tri_z = sp.robust_triangulate(O_far + O_near, D_far + D_near, (O_near[-1], D_near[-1]), CFG)
+    assert tri_z is not None and abs(tri_z['pos'][2] - 4.4) < 0.3
+
+
+def test_refinement_cannot_drift_behind_anchor_onto_collinear_distant_frog():
+    """When the robot drives west past a close foreground frog while earlier bouts pointed straight
+    west at a distant collinear frog, the distant frog's rays pass near the anchor. Refinement must
+    reject any hypothesis that pulls the estimate off or behind the anchor bearing."""
+    rng = np.random.default_rng(19)
+    near_frog = (30.0, -13.9, 2.6)
+    far_frog = (16.1, -11.5, 2.7)
+    O, D, times = [], [], []
+    # Bout 0: robot driving west from x=32.4 to 30.2 hearing the distant west frog
+    for k in range(10):
+        o = np.array([32.4 - 0.24 * k, -13.8 + 0.04 * k, 2.65])
+        O.append(o)
+        D.append(bearing(o, far_frog, rng, 0.5))
+        times.append(0.75 * k)
+    # Bout 1: robot passes the close frog from x=30.1 to 28.2, anchor points SE (+x, -y)
+    for k in range(10):
+        o = np.array([30.1 - 0.21 * k, -13.4 + 0.08 * k, 2.70])
+        O.append(o)
+        D.append(bearing(o, near_frog, rng, 1.0))
+        times.append(10.0 + 0.75 * k)
+    anchor = (O[14], D[14])
+    groups = sp.bout_ids(times, 1.2)
+    cfg = dict(CFG, ray_inlier_deg=2.0, anchor_tol_deg=8.0)
+    tri = sp.robust_triangulate(O, D, anchor, cfg, groups=groups)
+    assert tri is not None
+    assert math.hypot(tri['pos'][0] - near_frog[0], tri['pos'][1] - near_frog[1]) < 0.35
+
+
+def test_low_slope_preference_in_vantage_frontiers_and_path_cost():
+    g = world(size=20.0, origin=(-10.0, -10.0))
+    # North half (y > 0) is a 18 deg sloped hillside (cost=55); south half (y <= 0) is flat trail (cost=0)
+    rect(g, -10.0, 10.0, 0.2, 10.0, val=55)
+    # 1) Vantage around an elevated tree frog at (0, 0): robot starts slightly uphill at (0, 1.5),
+    #    yet flat trail viewpoints (cost=0, y <= 0) must outrank closer tilted hillside viewpoints (y > 0.2, cost=55)
+    vcands = sp.vantage_candidates((0.0, 0.0, 1.5), (0.0, 1.5), 'elevated', g, CFG)
+    assert vcands and vcands[0][1][1] <= 0.01
+    assert g.cost(vcands[0][1][0], vcands[0][1][1]) == 0
+    # 2) Terrain-weighted path cost: 5 m flat detour beats 3 m steep hillside shortcut
+    flat_path = [(0.0, -1.0), (5.0, -1.0)]
+    steep_path = [(0.0, 1.0), (3.0, 1.0)]
+    assert sp.path_terrain_cost(flat_path, g, slope_weight=3.0) < sp.path_terrain_cost(steep_path, g, slope_weight=3.0)

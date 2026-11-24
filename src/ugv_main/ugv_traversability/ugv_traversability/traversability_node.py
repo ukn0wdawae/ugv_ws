@@ -10,6 +10,8 @@ Publishes
   ~/ground            sensor_msgs/PointCloud2 traversable cells, frame = robot_frame -> Nav2 obstacle_layer (clearing)
 """
 
+import array
+from collections import deque
 import time
 
 import numpy as np
@@ -25,8 +27,8 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from .cloud_utils import apply, cloud_to_xyz, quat_to_rot, rot_to_rpy, rpy_to_rot, transform_to_matrix, \
     xyz_to_cloud_fields
-from .elevation_map import RollingElevationMap
-from .features import TraversabilityParams, compute_traversability
+from .elevation_map import RollingCostGrid, RollingElevationMap
+from .features import TraversabilityParams, clamp_footprint_cost, compute_traversability
 
 
 class TraversabilityNode(Node):
@@ -50,15 +52,23 @@ class TraversabilityNode(Node):
         # the ground at a grazing angle: beyond ~2 m its sample rows are decimetres apart and its
         # height error grows with range, so it is best used only for the lidar's near-field gap.
         max_ranges = [float(v) for v in d('cloud_max_ranges', [0.0]).value]
-        self.max_height_above_robot = float(d('max_height_above_robot', 0.9).value)
+        self.max_height_above_robot = float(d('max_height_above_robot', 0.45).value)
         self.max_depth_below_robot = float(d('max_depth_below_robot', 2.0).value)
         self.self_filter = list(d('self_filter_box', [-0.16, 0.16, -0.13, 0.13, 0.35]).value)
         self.footprint_radius = float(d('footprint_radius', 0.12).value)
+        # clamp computed cost inside the robot's own chassis disc to non-lethal so adjacent
+        # obstacles cannot bleed cost=100 onto the robot's standing cell via the +/-0.15 m window
+        self.footprint_clear_radius = float(d('footprint_clear_radius', 0.16).value)
+        self.footprint_max_cost = int(d('footprint_max_cost', 50).value)
         # fill the footprint on the robot's (tilted) base plane rather than a flat disc
         self.footprint_follow_slope = bool(d('footprint_follow_slope', True).value)
         # place clouds only with the pose at their own timestamp (park + retry up to pose_wait_s)
         self.exact_pose = bool(d('exact_pose', True).value)
-        self.pose_wait_s = float(d('pose_wait_s', 0.3).value)
+        self.pose_wait_s = float(d('pose_wait_s', 0.6).value)
+        self.max_pending_clouds = max(1, int(d('max_pending_clouds', 32).value))
+        self.imu_filter_alpha = float(d('imu_filter_alpha', 0.25).value)
+        self.range_weight_scale = float(d('range_weight_scale', 1.5).value)
+        self.stabilize_attitude = bool(d('stabilize_attitude', True).value)
         self.pending = []
         self.publish_rate = float(d('publish_rate', 5.0).value)
         self.obstacle_cost = int(d('obstacle_cost_threshold', 100).value)
@@ -69,6 +79,7 @@ class TraversabilityNode(Node):
         p.resolution = float(d('resolution', p.resolution).value)
         p.plane_radius = float(d('plane_radius', p.plane_radius).value)
         p.step_radius = float(d('step_radius', p.step_radius).value)
+        p.step_outlier_trim = int(d('step_outlier_trim', 1).value)
         p.min_valid_ratio = float(d('min_valid_ratio', p.min_valid_ratio).value)
         p.slope_safe_deg = float(d('slope_safe_deg', p.slope_safe_deg).value)
         p.slope_critical_deg = float(d('slope_critical_deg', p.slope_critical_deg).value)
@@ -84,11 +95,20 @@ class TraversabilityNode(Node):
                                        alpha=float(d('fusion_alpha', 0.4).value),
                                        max_age=float(d('max_age', 20.0).value),
                                        recenter_dist=float(d('recenter_distance', 0.5).value))
+        self.global_map = RollingCostGrid(
+            length=float(d('global_map_length', 110.0).value),
+            resolution=float(d('global_resolution', 0.20).value),
+            recenter_dist=float(d('global_recenter_distance', 5.0).value),
+            alpha=float(d('global_fusion_alpha', 0.5).value),
+            max_cost=int(d('global_max_cost', 90).value))
+        self.global_publish_rate = float(d('global_publish_rate', 2.0).value)
+        self._last_global_pub = 0.0
 
         self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.static_cache = {}
         self.imu_rp = None
+        self.imu_buf = deque(maxlen=250)  # (stamp_s, roll, pitch) for time-aligned attitude lookup
         self.z_est = 0.0
         self.last_xy = None
         self.odom_is_3d = False
@@ -121,6 +141,8 @@ class TraversabilityNode(Node):
         latched = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE,
                              durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.pub_grid = self.create_publisher(OccupancyGrid, '~/grid', latched)
+        self.pub_obst_grid = self.create_publisher(OccupancyGrid, '~/obstacle_grid', latched)
+        self.pub_global_grid = self.create_publisher(OccupancyGrid, '~/global_grid', latched)
         self.pub_elev = self.create_publisher(PointCloud2, '~/elevation_cloud', 2)
         self.pub_obst = self.create_publisher(PointCloud2, '~/obstacles', 2)
         self.pub_ground = self.create_publisher(PointCloud2, '~/ground', 2)
@@ -133,7 +155,36 @@ class TraversabilityNode(Node):
         if q.x == q.y == q.z == q.w == 0.0:
             return
         r, p, _ = rot_to_rpy(quat_to_rot(q.x, q.y, q.z, q.w))
-        self.imu_rp = (r, p)
+        a = self.imu_filter_alpha
+        if self.imu_rp is None or a >= 1.0:
+            self.imu_rp = (r, p)
+        else:
+            self.imu_rp = ((1.0 - a) * self.imu_rp[0] + a * r, (1.0 - a) * self.imu_rp[1] + a * p)
+        t_s = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
+        if t_s > 0.0:
+            self.imu_buf.append((t_s, self.imu_rp[0], self.imu_rp[1]))
+
+    def _imu_rp_at(self, stamp):
+        """Interpolate roll/pitch at cloud timestamp `stamp`, falling back to latest filtered IMU."""
+        if not self.imu_buf:
+            return self.imu_rp
+        t_s = stamp.nanoseconds * 1e-9
+        if t_s <= 0.0:
+            return self.imu_rp
+        buf = self.imu_buf
+        if t_s <= buf[0][0]:
+            return (buf[0][1], buf[0][2])
+        if t_s >= buf[-1][0]:
+            return (buf[-1][1], buf[-1][2])
+        # Reverse scan (target stamp is usually very recent)
+        for i in range(len(buf) - 1, 0, -1):
+            t0, r0, p0 = buf[i - 1]
+            t1, r1, p1 = buf[i]
+            if t0 <= t_s <= t1:
+                dt = max(t1 - t0, 1e-6)
+                u = (t_s - t0) / dt
+                return (r0 + u * (r1 - r0), p0 + u * (p1 - p0))
+        return self.imu_rp
 
     def lookup(self, target, source, stamp, exact=False):
         # Never block the executor: try the exact stamp (optionally waiting tf_timeout, default 0),
@@ -169,11 +220,12 @@ class TraversabilityNode(Node):
                 self.odom_is_3d = True
                 self.get_logger().info(f'TF {self.fixed_frame}->{self.robot_frame} is already 3D '
                                        '(roll/pitch/z present): IMU attitude compensation disabled')
-        if not self.use_imu_attitude or self.odom_is_3d or self.imu_rp is None:
+        rp = self._imu_rp_at(stamp)
+        if not self.use_imu_attitude or self.odom_is_3d or rp is None:
             return T_tf, T_tf, tfm
         x, y = T_tf[0, 3], T_tf[1, 3]
         _, _, yaw = rot_to_rpy(T_tf[:3, :3])
-        roll, pitch = self.imu_rp
+        roll, pitch = rp
         R = rpy_to_rot(roll, pitch, yaw)
         if self.last_xy is not None:
             dxy = np.array([x, y]) - self.last_xy
@@ -208,7 +260,7 @@ class TraversabilityNode(Node):
         if self.exact_pose and not retry:
             if self.robot_pose(Time.from_msg(msg.header.stamp), exact=True) is None:
                 self.pending.append((time.monotonic(), msg, stride, max_range))
-                if len(self.pending) > 8:
+                if len(self.pending) > self.max_pending_clouds:
                     self.pending.pop(0)
                     self.stats['tf_drop'] = self.stats.get('tf_drop', 0) + 1
                 return
@@ -240,7 +292,9 @@ class TraversabilityNode(Node):
                       (pts_f[:, 2] > zr - self.max_depth_below_robot)]
         stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
         self.map.move_to(T_fr[0, 3], T_fr[1, 3])
-        self.map.insert(pts_f, stamp)
+        self.map.insert(pts_f, stamp, sensor_xy=(T_fr[0, 3], T_fr[1, 3]),
+                        range_weight_scale=self.range_weight_scale,
+                        stabilize_attitude=self.stabilize_attitude)
         self.map.set_footprint(T_fr[0, 3], T_fr[1, 3], zr, self.footprint_radius, stamp,
                                normal=T_fr[:3, 2] if self.footprint_follow_slope else None)
         self.last_pose = (tfm.header.stamp, T_fr, T_tf)
@@ -258,8 +312,26 @@ class TraversabilityNode(Node):
         self.map.expire(now.nanoseconds * 1e-9)
         layers = compute_traversability(self.map.h, self.params)
         cost = layers['cost']
-        stamp_tf, _, T_tf = self.last_pose
+        obst_cost = layers['obstacle_cost']
+        terr_cost = layers['terrain_cost']
+        stamp_tf, T_fr, T_tf = self.last_pose
         stamp = stamp_tf
+        X, Y = self.map.cell_centers()
+        if self.footprint_clear_radius > 0.0:
+            cost = clamp_footprint_cost(cost, X, Y, T_fr[0, 3], T_fr[1, 3],
+                                        self.footprint_clear_radius, self.footprint_max_cost)
+            obst_cost = clamp_footprint_cost(obst_cost, X, Y, T_fr[0, 3], T_fr[1, 3],
+                                             self.footprint_clear_radius, self.footprint_max_cost)
+            terr_cost = clamp_footprint_cost(terr_cost, X, Y, T_fr[0, 3], T_fr[1, 3],
+                                             self.footprint_clear_radius, self.footprint_max_cost)
+
+        self.global_map.move_to(T_fr[0, 3], T_fr[1, 3])
+        self.global_map.update_from_local(X, Y, terr_cost)
+
+        def _pack_i8(arr):
+            buf = array.array('b')
+            buf.frombytes(np.ascontiguousarray(arr, dtype=np.int8).tobytes())
+            return buf
 
         g = OccupancyGrid()
         g.header.frame_id = self.fixed_frame
@@ -269,10 +341,31 @@ class TraversabilityNode(Node):
         g.info.origin.position.x = float(self.map.origin[0])
         g.info.origin.position.y = float(self.map.origin[1])
         g.info.origin.orientation.w = 1.0
-        g.data = cost.ravel().tolist()
+        g.data = _pack_i8(cost)
         self.pub_grid.publish(g)
 
-        X, Y = self.map.cell_centers()
+        if self.pub_obst_grid.get_subscription_count():
+            og = OccupancyGrid()
+            og.header = g.header
+            og.info = g.info
+            og.data = _pack_i8(obst_cost)
+            self.pub_obst_grid.publish(og)
+
+        now_mono = time.monotonic()
+        if self.pub_global_grid.get_subscription_count() and \
+                (now_mono - self._last_global_pub) >= (1.0 / max(self.global_publish_rate, 0.2)):
+            self._last_global_pub = now_mono
+            gg = OccupancyGrid()
+            gg.header.frame_id = self.fixed_frame
+            gg.header.stamp = stamp
+            gg.info.resolution = self.global_map.res
+            gg.info.width = gg.info.height = self.global_map.n
+            gg.info.origin.position.x = float(self.global_map.origin[0])
+            gg.info.origin.position.y = float(self.global_map.origin[1])
+            gg.info.origin.orientation.w = 1.0
+            gg.data = _pack_i8(self.global_map.data)
+            self.pub_global_grid.publish(gg)
+
         known = cost >= 0
         if self.pub_elev.get_subscription_count():
             pts = np.stack([X[known], Y[known], self.map.h[known]], axis=1)

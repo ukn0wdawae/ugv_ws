@@ -90,13 +90,13 @@ class SurveyVizAids(Node):
         self.target_frame = d('target_frame', 'map').value
         self.base_frame = d('base_frame', 'base_footprint').value
         self.cloud_topic = d('cloud_topic', '/scan_cloud').value
-        self.every_n = max(1, int(d('every_n', 2).value))
+        self.every_n = max(1, int(d('every_n', 3).value))
         self.min_range = float(d('min_range_m', 0.3).value)
         self.max_range = float(d('max_range_m', 20.0).value)
         tf_timeout = float(d('tf_timeout_s', 0.1).value)
         self.tf_timeout = Duration(seconds=tf_timeout)
-        publish_period = float(d('publish_period_s', 2.0).value)
-        self.voxels = VoxelSet(float(d('voxel_size', 0.10).value), int(d('max_voxels', 1500000).value))
+        publish_period = float(d('publish_period_s', 4.0).value)
+        self.voxels = VoxelSet(float(d('voxel_size', 0.18).value), int(d('max_voxels', 1500000).value))
         grid_inputs = list(d('grid_inputs', GRID_INPUTS).value)
         grid_outputs = list(d('grid_outputs', GRID_OUTPUTS).value)
         self.grid_z_offset = float(d('grid_z_offset_m', -0.05).value)

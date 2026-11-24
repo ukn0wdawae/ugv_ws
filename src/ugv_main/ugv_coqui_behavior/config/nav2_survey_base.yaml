@@ -81,97 +81,98 @@ controller_server:
     progress_checker:
       plugin: nav2_controller::SimpleProgressChecker
       required_movement_radius: 0.5
-      movement_time_allowance: 20.0
+      movement_time_allowance: 15.0
     goal_checker:
       plugin: nav2_controller::SimpleGoalChecker
-      xy_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.28
       yaw_goal_tolerance: 6.28
       stateful: true
     FollowPath:
-      plugin: nav2_rotation_shim_controller::RotationShimController
-      primary_controller: dwb_core::DWBLocalPlanner
-      angular_dist_threshold: 0.785
-      forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 1.8
-      max_angular_accel: 3.2
-      simulate_ahead_time: 1.0
-      debug_trajectory_details: true
-      min_vel_x: 0.0
+      plugin: dwb_core::DWBLocalPlanner
+      debug_trajectory_details: false
+      min_vel_x: -0.15
       min_vel_y: 0.0
-      max_vel_x: 0.26
+      max_vel_x: 0.65
       max_vel_y: 0.0
-      max_vel_theta: 1.0
+      max_vel_theta: 2.2
       min_speed_xy: 0.0
-      max_speed_xy: 0.26
+      max_speed_xy: 0.65
       min_speed_theta: 0.0
-      acc_lim_x: 2.5
+      acc_lim_x: 2.0
       acc_lim_y: 0.0
-      acc_lim_theta: 0.5
-      decel_lim_x: -0.5
+      acc_lim_theta: 10.0
+      decel_lim_x: -2.0
       decel_lim_y: 0.0
-      decel_lim_theta: -0.5
-      vx_samples: 20
+      decel_lim_theta: -10.0
+      vx_samples: 14
       vy_samples: 0
-      vtheta_samples: 40
-      sim_time: 1.5
+      vtheta_samples: 25
+      sim_time: 1.0
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
-      xy_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.28
       trans_stopped_velocity: 0.25
       short_circuit_trajectory_evaluation: true
       stateful: true
       critics:
-      - RotateToGoal
       - Oscillation
-      - BaseObstacle
-      - GoalAlign
+      - ObstacleFootprint
       - PathAlign
       - PathDist
       - GoalDist
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
+      - PreferForward
+      ObstacleFootprint.scale: 0.02
+      ObstacleFootprint.sum_scores: false
+      PathAlign.scale: 24.0
+      PathAlign.forward_point_distance: 0.30
       PathDist.scale: 32.0
       GoalDist.scale: 24.0
-      RotateToGoal.scale: 32.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
+      PreferForward.penalty: 15.0
+      PreferForward.strafe_x: 0.1
+      PreferForward.strafe_theta: 0.2
+      PreferForward.theta_scale: 0.0
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 8.0
+      publish_frequency: 4.0
       global_frame: odom
-      robot_base_frame: base_link
+      robot_base_frame: base_footprint
       use_sim_time: true
+      transform_tolerance: 0.2
       rolling_window: true
-      width: 5
-      height: 5
+      width: 6
+      height: 6
       resolution: 0.05
-      robot_radius: 0.1
-      use_maximum: true
+      footprint: "[ [0.15, 0.12], [0.15, -0.12], [-0.15, -0.12], [-0.15, 0.12] ]"
+      # StaticLayer runs FIRST with use_maximum: false, then obstacle_layer max-combines on top
+      # (combination_method: 1). This prevents StaticLayer NO_INFORMATION (255) from winning std::max
+      # and erasing obstacle_layer cells, while keeping graded slope costs intact.
+      use_maximum: false
       trinary_costmap: false
       lethal_cost_threshold: 100
       plugins:
-      - obstacle_layer
       - traversability_layer
+      - obstacle_layer
       - inflation_layer
       traversability_layer:
         plugin: nav2_costmap_2d::StaticLayer
         map_topic: /terrain_traversability/grid
         map_subscribe_transient_local: true
         subscribe_to_updates: false
+        use_maximum: false
+        trinary_costmap: false
+        lethal_cost_threshold: 100
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        cost_scaling_factor: 6.0
+        inflation_radius: 0.32
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
         max_obstacle_height: 1000.0
         enabled: true
+        combination_method: 1
         observation_sources: obstacles_cloud ground_cloud
         footprint_clearing_enabled: true
         obstacles_cloud:
@@ -181,6 +182,7 @@ local_costmap:
           clearing: true
           marking: true
           data_type: PointCloud2
+          expected_update_rate: 1.0
           raytrace_max_range: 5.0
           raytrace_min_range: 0.0
           obstacle_max_range: 4.0
@@ -192,6 +194,7 @@ local_costmap:
           clearing: true
           marking: false
           data_type: PointCloud2
+          expected_update_rate: 1.0
           raytrace_max_range: 5.0
           raytrace_min_range: 0.0
           obstacle_max_range: 4.0
@@ -203,21 +206,42 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 2.0
-      publish_frequency: 1.0
+      update_frequency: 3.0
+      publish_frequency: 2.0
       global_frame: map
       robot_base_frame: base_footprint
       use_sim_time: true
-      robot_radius: 0.1
+      transform_tolerance: 0.2
+      footprint: "[ [0.15, 0.12], [0.15, -0.12], [-0.15, -0.12], [-0.15, 0.12] ]"
       resolution: 0.1
       track_unknown_space: true
+      # StaticLayer MUST run BEFORE obstacle_layer with use_maximum: false:
+      # in Nav2 Humble, StaticLayer rolling-window max uses std::max(cost, master) where
+      # NO_INFORMATION=255 > LETHAL=254 > FREE=0, which erased free space and obstacles.
+      # Running traversability_layer first (overwrite) and obstacle_layer second (combination_method: 1
+      # = CostmapLayer::updateWithMax, which skips NO_INFORMATION and replaces master=255 with 0/254)
+      # preserves unknown frontiers, raytraced free space, graded slope costs, and lethal obstacles.
+      use_maximum: false
+      trinary_costmap: false
+      lethal_cost_threshold: 100
       plugins:
+      - traversability_layer
       - obstacle_layer
       - inflation_layer
+      traversability_layer:
+        plugin: nav2_costmap_2d::StaticLayer
+        map_topic: /terrain_traversability/global_grid
+        map_subscribe_transient_local: true
+        subscribe_to_updates: false
+        use_maximum: false
+        track_unknown_space: true
+        trinary_costmap: false
+        lethal_cost_threshold: 100
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
         max_obstacle_height: 1000.0
         enabled: true
+        combination_method: 1
         observation_sources: obstacles_cloud ground_cloud
         footprint_clearing_enabled: true
         obstacles_cloud:
@@ -227,6 +251,7 @@ global_costmap:
           clearing: true
           marking: true
           data_type: PointCloud2
+          expected_update_rate: 1.0
           raytrace_max_range: 6.0
           raytrace_min_range: 0.0
           obstacle_max_range: 5.0
@@ -238,14 +263,15 @@ global_costmap:
           clearing: true
           marking: false
           data_type: PointCloud2
+          expected_update_rate: 1.0
           raytrace_max_range: 6.0
           raytrace_min_range: 0.0
           obstacle_max_range: 5.0
           obstacle_min_range: 0.2
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.4
+        cost_scaling_factor: 6.0
+        inflation_radius: 0.32
       always_send_full_costmap: true
       rolling_window: true
       width: 50
@@ -295,7 +321,7 @@ behavior_server:
       plugin: nav2_behaviors/AssistedTeleop
     global_frame: odom
     robot_base_frame: base_footprint
-    transform_tolerance: 0.1
+    transform_tolerance: 0.2
     use_sim_time: true
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
@@ -321,21 +347,21 @@ velocity_smoother:
     scale_velocities: false
     feedback: OPEN_LOOP
     max_velocity:
-    - 0.26
+    - 0.75
     - 0.0
-    - 1.0
-    min_velocity:
-    - -0.26
-    - 0.0
-    - -1.0
-    max_accel:
     - 2.5
+    min_velocity:
+    - -0.4
     - 0.0
-    - 3.2
-    max_decel:
     - -2.5
+    max_accel:
+    - 1.5
     - 0.0
-    - -3.2
+    - 4.5
+    max_decel:
+    - -1.5
+    - 0.0
+    - -4.5
     odom_topic: odom
     odom_duration: 0.1
     deadband_velocity:
@@ -343,3 +369,42 @@ velocity_smoother:
     - 0.0
     - 0.0
     velocity_timeout: 1.0
+collision_monitor:
+  ros__parameters:
+    use_sim_time: true
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+    cmd_vel_in_topic: cmd_vel_smoothed
+    cmd_vel_out_topic: cmd_vel
+    transform_tolerance: 0.2
+    source_timeout: 2.5
+    base_shift_correction: true
+    stop_pub_timeout: 1.5
+    polygons:
+    - PolygonStop
+    - PolygonSlow
+    PolygonStop:
+      type: polygon
+      points: [0.22, 0.15, 0.22, -0.15, -0.19, -0.15, -0.19, 0.15]
+      action_type: stop
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: polygon_stop
+      enabled: true
+    PolygonSlow:
+      type: polygon
+      points: [0.55, 0.22, 0.55, -0.22, -0.25, -0.22, -0.25, 0.22]
+      action_type: slowdown
+      max_points: 4
+      slowdown_ratio: 0.4
+      visualize: true
+      polygon_pub_topic: polygon_slowdown
+      enabled: true
+    observation_sources:
+    - obstacles_cloud
+    obstacles_cloud:
+      type: pointcloud
+      topic: /terrain_traversability/obstacles
+      min_height: -2.0
+      max_height: 2.0
+      enabled: true

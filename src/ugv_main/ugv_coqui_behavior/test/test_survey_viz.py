@@ -55,6 +55,8 @@ def test_mmss(seconds, text):
 def test_hud_examples():
     explore = sv.hud_text('EXPLORE', {'goal': [31.0, -4.0], 'path_m': 12.34, 'uncovered': 9}, 2, 331.2, 7, 23)
     assert explore == ['EXPLORE -> station (31.0, -4.0), path 12.3 m', 'frogs recorded: 2   stations 7/23   05:31']
+    frontier = sv.hud_text('EXPLORE', {'mode': 'frontier', 'goal': [31.0, -4.0], 'path_m': 5.2}, 2, 331.2, 7, 23)
+    assert frontier[0] == 'EXPLORE -> frontier (31.0, -4.0), path 5.2 m'
     hunt = sv.hud_text('HUNT', {'step': 3, 'obs': 14, 'est': [31.24, -4.0, 3.1], 'inliers': 9, 'places': 3,
                                 'parallax_deg': 12.4, 'unc_m': 0.8}, 1, 100, 3, 23)
     assert hunt[:2] == ['HUNT step 3: 9 bearings from 3 places, parallax 12 deg',

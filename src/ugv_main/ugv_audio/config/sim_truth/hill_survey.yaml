@@ -1,0 +1,38 @@
+# SIMULATION GROUND TRUTH ("answer key") for the hill-switchback Coqui survey.
+#
+# Read ONLY by:
+#   - ugv_audio/coqui_sound_emitter (mode: survey)                -> synthesise calls at these positions
+#   - ugv_gazebo/scripts/coqui/make_forest_coqui_survey_world.py  -> place the frog models in hill_coqui_survey.world
+#   - ugv_coqui_behavior/eval_survey.py                           -> grade a finished survey
+# The robot side (mic_array_localizer, coqui_survey_node, Nav2) never reads this file and never
+# receives any of it over ROS.
+#
+# pos = frog model origin in the Gazebo world (= map/odom frame in sim). Call is emitted 5 cm above it.
+# z values are queried directly from hill_ground.stl / hill.world tree poses (+1.5 m for the tree frog).
+world: hill_coqui_survey
+spawn: [43.0, -13.0, 2.45, -3.0]   # lower east trailhead, facing west along the lower switchback road
+frogs:
+  - id: coqui_01
+    pos: [30.0, -13.9, 2.578]
+    habitat: open lower trail (~13 m west of start)
+    attenuation: 1.0
+  - id: coqui_02
+    pos: [16.1, -11.5, 2.702]
+    habitat: inside tall dry grass beside lower trail
+    attenuation: 0.85
+  - id: coqui_03
+    pos: [-1.23, -10.78, 4.390]
+    habitat: perched 1.5 m up a dry tree trunk beside lower trail
+    attenuation: 0.94
+  - id: coqui_04
+    pos: [-36.34, -9.62, 7.150]
+    habitat: inside a dry bush on the steep west switchback climb
+    attenuation: 0.78
+  - id: coqui_05
+    pos: [6.0, 12.7, 12.937]
+    habitat: open upper ridge trail (~10.5 m above start)
+    attenuation: 1.0
+  - id: coqui_06
+    pos: [36.0, 12.6, 12.855]
+    habitat: far east upper ridge plateau (directly above start, +10.5 m higher)
+    attenuation: 1.0

@@ -1,0 +1,22 @@
+# Profile: mountain switchback hill (hill.world / hill_coqui_survey.world), 11 m vertical climb
+# from the lower east trailhead (z ~ 2.4 m) up the west hairpin (10-22 deg slopes) to the upper
+# ridge plateau (z ~ 13.0 m). Merged on top of survey_base.yaml (`survey:`) and nav2_survey_base.yaml (`nav2:`).
+survey:
+  coqui_survey:
+    ros__parameters:
+      # Covers the lower trail, west switchback climb, and upper ridge inside hill_boundary (+-49, +-24).
+      survey_area: [-39.0, 48.0, -16.5, 16.5]
+      max_mission_sec: 3600.0
+nav2:
+  local_costmap:
+    local_costmap:
+      ros__parameters:
+        inflation_layer:
+          inflation_radius: 0.32
+  global_costmap:
+    global_costmap:
+      ros__parameters:
+        # Wider rolling window at 15 cm covers the 87 m hill span smoothly with fewer cells than 50x50@10cm
+        width: 100
+        height: 46
+        resolution: 0.15

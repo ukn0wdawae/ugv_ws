@@ -47,6 +47,17 @@ def set_gui_camera_pose(txt, pose):
     return txt[:gui.start()] + block + txt[gui.end():]
 
 
+def set_physics_step(txt, step_size):
+    """Set ODE physics step size and matching real_time_update_rate (keeps real_time_factor = 1)."""
+    rate = int(round(1.0 / step_size))
+    phys = re.search(r'<physics\b.*?</physics>', txt, flags=re.S)
+    if phys is None:
+        return txt
+    block = re.sub(r'(<max_step_size>)[^<]*(</max_step_size>)', rf'\g<1>{step_size:g}\g<2>', phys.group(0), count=1)
+    block = re.sub(r'(<real_time_update_rate>)[^<]*(</real_time_update_rate>)', rf'\g<1>{rate}\g<2>', block, count=1)
+    return txt[:phys.start()] + block + txt[phys.end():]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--truth', default=DEFAULT_TRUTH)
@@ -62,10 +73,14 @@ def main():
                     help='Gazebo GUI start view: metres above the spawn z')
     ap.add_argument('--cam-pitch', type=float, default=GUI_CAM_PITCH,
                     help='Gazebo GUI start view: pitch in rad (positive looks down)')
+    ap.add_argument('--physics-step', type=float, default=0.002,
+                    help='ODE max_step_size in s (0.002 = 500 Hz; cuts physics CPU load in half vs 1000 Hz)')
     a = ap.parse_args()
 
     truth = yaml.safe_load(open(a.truth))
     txt = open(a.base).read()
+    if a.physics_step > 0:
+        txt = set_physics_step(txt, a.physics_step)
 
     sph = ('<spherical_coordinates>\n'
            '      <surface_model>EARTH_WGS84</surface_model>\n'

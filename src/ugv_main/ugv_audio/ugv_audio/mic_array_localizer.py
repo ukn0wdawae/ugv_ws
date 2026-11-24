@@ -25,40 +25,27 @@ from nav_msgs.msg import Odometry
 from visualization_msgs.msg import Marker, MarkerArray
 import tf2_ros
 
-
-SPEED_OF_SOUND = 343.0
-SAMPLE_RATE = 16000
-FRAME_SAMPLES = 2048
-
-MIC_POSITIONS_BODY = np.array([
-    [0.095,  0.075, 0.000],  # 0: mic_fl_link
-    [0.095, -0.075, 0.000],  # 1: mic_fr_link
-    [-0.095, 0.075, 0.000],  # 2: mic_rl_link
-    [-0.095, -0.075, 0.000], # 3: mic_rr_link
-    [-0.065, 0.000, 0.040],  # 4: mic_top_link
-], dtype=np.float64)
+from .audio_core import (
+    COQUI_MASK,
+    FRAME_SAMPLES,
+    FREQS,
+    MIC_POSITIONS_BODY,
+    NOISE_GUARD_MASK,
+    SAMPLE_RATE,
+    SPEED_OF_SOUND,
+    compute_coqui_snr_db,
+    quat_to_rot_matrix,
+)
 
 # Reference RMS at 1m for a full Coqui call frame (used only for initial range prior before parallax)
 REF_RMS_AT_1M = 0.425
-
-
-def quat_to_rot_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
-    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
-    if n < 1e-12:
-        return np.eye(3)
-    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
-    return np.array([
-        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw),     2 * (qx * qz + qy * qw)],
-        [2 * (qx * qy + qz * qw),     1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
-        [2 * (qx * qz - qy * qw),     2 * (qy * qz + qx * qw),     1 - 2 * (qx * qx + qy * qy)],
-    ], dtype=np.float64)
 
 
 class MicArrayLocalizerNode(Node):
     def __init__(self):
         super().__init__('mic_array_localizer')
 
-        self.declare_parameter('snr_threshold_db', 8.0)
+        self.declare_parameter('snr_threshold_db', 6.0)
         self.declare_parameter('min_baseline_for_convergence_m', 0.45)
         self.declare_parameter('min_rays_for_convergence', 3)
         self.declare_parameter('max_stored_rays', 30)
@@ -89,11 +76,10 @@ class MicArrayLocalizerNode(Node):
         self.latest_odom_rot = np.eye(3, dtype=np.float64)
         self.create_subscription(Odometry, '/odom', self._odom_cb, 10)
 
-        # Precompute frequency bins for Coqui passband (1000 Hz - 2400 Hz)
-        freqs = np.fft.rfftfreq(FRAME_SAMPLES, d=1.0 / SAMPLE_RATE)
-        self.coqui_mask = (freqs >= 1000.0) & (freqs <= 2400.0)
-        self.noise_mask = ((freqs >= 300.0) & (freqs <= 850.0)) | ((freqs >= 2700.0) & (freqs <= 4500.0))
-        self.coqui_freqs = freqs[self.coqui_mask]  # shape (F,)
+        # Harmonic-free dual-band Co/Qui passband (1060-1260 Hz & 1760-2260 Hz) and guard noise bands
+        self.coqui_mask = COQUI_MASK
+        self.noise_mask = NOISE_GUARD_MASK
+        self.coqui_freqs = FREQS[self.coqui_mask]  # shape (F,)
 
         # Precompute coarse 3D spherical grid for SRP-PHAT:
         # Azimuth: -180..+180 deg (72 steps = 5 deg), Elevation: -15..+65 deg (17 steps = 5 deg)
@@ -274,14 +260,8 @@ class MicArrayLocalizerNode(Node):
             return
         signals = data.reshape((num_mics, FRAME_SAMPLES))
 
-        # 1. Spectral analysis & Coqui call detection
-        win = np.hanning(FRAME_SAMPLES)[None, :]
-        specs = np.fft.rfft(signals * win, axis=1)  # (5, N_freq)
-        power_spec = np.mean(np.abs(specs) ** 2, axis=0)
-
-        coqui_energy = float(np.mean(power_spec[self.coqui_mask]))
-        noise_energy = max(float(np.mean(power_spec[self.noise_mask])), 1e-12)
-        snr_db = 10.0 * math.log10(max(coqui_energy / noise_energy, 1e-6))
+        # 1. Harmonic-free, motor-noise-resilient spectral SNR & Coqui call detection
+        snr_db, specs, _power_spec = compute_coqui_snr_db(signals, SAMPLE_RATE)
 
         is_detected = snr_db >= self.snr_threshold_db
         det_msg = Bool()

@@ -1,0 +1,173 @@
+# Pooled catalog of ALL historical UGV test cases, smoke tests, slope runs, and navigation failures.
+# Used by both tests/offline/ and tests/sim/run_nav_benchmark.sh to evaluate any navigation style.
+
+smoke_tests:
+  - id: smoke1_forest_short
+    profile: forest
+    seed: 0
+    randomize: false
+    max_mission_sec: 300
+    spawn: [48.0, 2.1, 2.75, -3.13]
+    origin: "coqui_surveys/smoke1"
+    expect:
+      min_frogs_matched: 1
+      max_false_positives: 0
+      allow_crash: false
+      allow_fall: false
+
+  - id: smoke2_forest_multistep
+    profile: forest
+    seed: 1
+    randomize: true
+    max_mission_sec: 600
+    origin: "coqui_surveys/smoke2 (upgraded with seed=1 randomization)"
+    expect:
+      min_frogs_matched: 1
+      max_false_positives: 0
+      max_mean_err_xy_m: 0.6
+
+  - id: full6_forest_complete
+    profile: forest
+    seed: 0
+    randomize: false
+    max_mission_sec: 2400
+    spawn: [48.0, 2.1, 2.75, -3.13]
+    origin: "coqui_surveys/full6"
+    expect:
+      min_frogs_matched: 4
+      max_false_positives: 0
+      require_return_home: true
+
+slope_tests:
+  - id: slope_test_1_upper_bank
+    profile: hill
+    seed: 0
+    max_mission_sec: 240
+    spawn: [-11.219, 3.479, 12.597, 0.257]
+    origin: "coqui_surveys/slope_test_1 (steep upper hill bank start)"
+    expect:
+      allow_capsize: false
+      allow_unnoticed_fall: false
+      max_descent_dist_m: 6.5
+
+  - id: slope_test_2_west_steep
+    profile: hill
+    seed: 0
+    max_mission_sec: 240
+    spawn: [-15.633, 6.319, 12.232, 2.622]
+    origin: "coqui_surveys/slope_test_2 (west steep hillside)"
+    expect:
+      allow_capsize: false
+      allow_unnoticed_fall: false
+
+  - id: slope_test_3_fall_guard
+    profile: hill
+    seed: 0
+    max_mission_sec: 240
+    spawn: [-11.201, 10.497, 12.366, -1.561]
+    origin: "coqui_surveys/slope_test_3 (21:01 run: dropped 9.6 m in 16 s at 2.4 m/s while Nav2 logged Goal succeeded)"
+    expect:
+      allow_unnoticed_fall: false
+      abort_on_drop_m: 1.5
+      abort_on_speed_mps: 1.5
+
+  - id: bush_slope_test
+    profile: hill
+    seed: 0
+    max_mission_sec: 300
+    spawn: [-3.125, -9.014, 3.390, 2.985]
+    origin: "coqui_surveys/bush_slope_test (bush + steep bank side-hill rollover guard)"
+    expect:
+      allow_capsize: false
+      max_boulder_collision: 0
+
+  - id: hill_v1_switchback_return_home
+    profile: hill
+    seed: 0
+    max_mission_sec: 1200
+    spawn: [43.0, -13.0, 2.45, -3.0]
+    origin: "coqui_surveys/hill_v1 (logged DONE 57 m from home; 19:40 had 0/74 recoveries)"
+    expect:
+      min_recovery_success_rate: 0.4
+      require_staged_return_home: true
+      max_home_dist_m: 1.5
+
+nav_goal_tests:
+  - id: forest_offpath_and_return
+    profile: forest
+    spawn: [24.0, 3.7, 2.78, 0.0]
+    goals:
+      - [24.5, 6.2]   # off path up the bank
+      - [24.0, 3.7]   # back onto path
+    origin: "docs/forest_traversability/REPORT.md Test C"
+    expect:
+      min_goals_succeeded: 2
+      max_pitch_deg: 28.0
+      max_roll_deg: 25.0
+
+physics_tests:
+  - id: cross_slope_slip_6deg
+    script: tests/sim/run_slope_physics_test.sh
+    origin: "docker/.slopetest.sh (6 deg cross-slope slip check)"
+  - id: hill_cracks_wall_uphill
+    script: tests/sim/run_hill_terrain_test.sh
+    origin: "docker/.hilltest.sh (idle spawn, north/south cracks, boundary wall, uphill climb)"
+  - id: forest_24_drive_trials
+    script: tests/sim/run_drive_trials.sh
+    trials_file: tests/cases/forest_drive_trials.json
+    origin: "docs/forest_traversability/test_harness/trials.json (24 trials: 7 edge_off, 3 edge_on, 8 open, 6 vegetation)"
+
+navigation_failure_regressions:
+  - id: fail_1940_recoveries_0_of_74
+    summary: "BaseObstacle checks robot center while Spin/BackUp check full footprint -> 0/74 recoveries"
+    offline_test: "tests/offline/test_costmap_and_nav_config.py::test_dwb_uses_footprint_critic_not_center_only"
+  - id: fail_2101_unnoticed_fall_9_6m
+    summary: "Dropped 9.6 m in 16 s at 2.4 m/s; guard ignored tilt > 70 deg and only ran during Nav2 goals"
+    offline_test: "tests/offline/test_slope_and_safety.py::test_safety_monitor_catches_2101_fall_and_capsize"
+  - id: fail_escape_30m_unknown_oob
+    summary: "Escape drove up to 30 m downhill, treated unknown as free, skipped survey_area when obs_frame != map"
+    offline_test: "tests/offline/test_slope_and_safety.py::test_escape_maneuver_bounded_blocks_unknown_and_enforces_area"
+  - id: fail_286_global_costmap_wipes
+    summary: "BT wiped global costmap 286 times across 12 sessions, erasing frontier exploration map"
+    offline_test: "tests/offline/test_costmap_and_nav_config.py::test_bt_never_wipes_global_costmap"
+  - id: fail_hill_v1_return_home_57m
+    summary: "Return-home broke beyond rolling window; logged DONE 57 m from home"
+    offline_test: "tests/offline/test_navigation_failures.py::test_staged_return_home_beyond_rolling_window"
+  - id: fail_2131_slope_layer_unknown_wipe
+    summary: "StaticLayer use_maximum + track_unknown_space caused NO_INFORMATION (255) to win max and erase known cells"
+    offline_test: "tests/offline/test_costmap_and_nav_config.py::test_global_slope_layer_unknown_handling"
+    ros_test: "tests/ros/test_nav2_costmap_layers.py"
+  - id: fail_2004_boxed_in_and_cooldown_exit
+    summary: "Boxed in 15 s after start; 16 stations failed in 10 s; mission ended when remaining stations were in cooldown"
+    offline_test: "tests/offline/test_navigation_failures.py::test_cooldown_resets_prevent_premature_mission_end"
+  - id: fail_2004_frog6_keepout_pin
+    summary: "Pinned 0.29 m from already-recorded frog 6 (invisible 28x34 cm cylinder + no keep-out zone)"
+    offline_test: "tests/offline/test_navigation_failures.py::test_recorded_frog_keepout_zone"
+  - id: fail_listening_while_driving
+    summary: "Moving bearings raised median error from 0.04 m to 0.64 m and broke uncertainty calibration"
+    offline_test: "tests/offline/test_navigation_failures.py::test_stationary_only_triangulation_and_calibrated_uncertainty"
+  - id: fail_2004_false_frog_empty_photo
+    summary: "False frog saved 5 m off as +-0.14 m despite empty photo, then masked +-30 deg cone"
+    offline_test: "tests/offline/test_navigation_failures.py::test_empty_open_ground_photo_rejected_and_tighter_mask"
+  - id: fail_2109_quiet_frog_mid_hunt
+    summary: "4 cm fix dropped when frog went quiet; 4.8 m fix accepted later at step limit"
+    offline_test: "tests/offline/test_navigation_failures.py::test_quiet_frog_keeps_tight_fix_and_rejects_loose_fix"
+  - id: fail_1348_goal_timeout_not_counted
+    summary: "Four 180 s goal timeouts in a row never incremented nav_fail_streak or triggered unstick"
+    offline_test: "tests/offline/test_navigation_failures.py::test_goal_timeout_increments_fail_streak"
+  - id: fail_stale_sensor_drives_blind
+    summary: "Terrain node or lidar dies -> Nav2 kept driving on stale data"
+    offline_test: "tests/offline/test_slope_and_safety.py::test_safety_monitor_aborts_on_stale_sensors"
+  - id: fail_low_branches_wall
+    summary: "max_height_above_robot 0.9 m treated overhead branches as walls"
+    offline_test: "tests/offline/test_traversability_realism.py::test_low_branches_ignored_above_chassis_clearance"
+  - id: fail_attitude_noise_false_lethal
+    summary: "0.5-1.0 deg attitude error caused 39-84% false lethal cells at 2-4 m"
+    offline_test: "tests/offline/test_traversability_realism.py::test_attitude_error_sensitivity_stays_bounded"
+  - id: fail_audio_snr_cap_and_motor_noise
+    summary: "Harmonic in noise band capped SNR at 13.4 dB; motor noise cut detections to zero"
+    offline_test: "tests/offline/test_audio_realism.py::test_snr_dynamic_range_and_motor_noise_resilience"
+  - id: fail_slam_launch_and_double_rviz
+    summary: "localization:=slam crashed rtabmap_3d_lidar boolean arg; rviz:=true opened two RViz windows"
+    offline_test: "tests/offline/test_launch_and_scripts.py"
+    ros_test: "tests/ros/test_launch_resolution.py"

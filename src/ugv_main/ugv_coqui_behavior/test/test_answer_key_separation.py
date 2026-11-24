@@ -12,7 +12,7 @@ import glob
 import os
 
 SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))      # src/ugv_main
-FORBIDDEN = ('sim_truth', 'forest_survey.yaml', '/sim/', 'truth_file', 'active_frog_info', 'emitter_markers',
+FORBIDDEN = ('sim_truth', 'forest_survey.yaml', 'hill_survey.yaml', '/sim/', 'truth_file', 'active_frog_info', 'emitter_markers',
              'lock_active_caller', 'model_states', 'link_states', 'get_entity_state', 'gazebo_msgs')
 # files in the robot-side package that are allowed to use the truth
 EXEMPT = {

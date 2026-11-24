@@ -15,10 +15,10 @@ import sys
 import yaml
 
 
-def default_truth():
+def default_truth(profile='forest'):
     try:
         from ament_index_python.packages import get_package_share_directory
-        return os.path.join(get_package_share_directory('ugv_audio'), 'config', 'sim_truth', 'forest_survey.yaml')
+        return os.path.join(get_package_share_directory('ugv_audio'), 'config', 'sim_truth', f'{profile}_survey.yaml')
     except Exception:
         return ''
 
@@ -73,13 +73,15 @@ def grade(survey, truth, match_m):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('survey')
-    ap.add_argument('--truth', default=default_truth())
+    ap.add_argument('--profile', default='forest', help='world profile (forest | hill) for default truth file')
+    ap.add_argument('--truth', default='')
     ap.add_argument('--match', type=float, default=2.0)
     ap.add_argument('--json', default='')
     a = ap.parse_args(argv)
-    if not a.truth:
+    truth_path = a.truth or default_truth(a.profile)
+    if not truth_path:
         sys.exit('pass --truth')
-    res = grade(yaml.safe_load(open(a.survey)), yaml.safe_load(open(a.truth)), a.match)
+    res = grade(yaml.safe_load(open(a.survey)), yaml.safe_load(open(truth_path)), a.match)
     print(f"recorded {res['frogs_recorded']}, true {res['frogs_true']}, matched {res['matched']} "
           f"(recall {res['recall']}, precision {res['precision']}), mean xy error {res['mean_err_xy_m']} m, "
           f"photos with frog in view {res['visually_confirmed']}")

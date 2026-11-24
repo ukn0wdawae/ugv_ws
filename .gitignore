@@ -10,3 +10,7 @@ images/
 coqui_captures/
 coqui_surveys/
 docs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/results/

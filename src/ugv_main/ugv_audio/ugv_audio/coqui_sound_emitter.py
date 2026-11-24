@@ -35,21 +35,17 @@ from std_msgs.msg import Bool, Float32MultiArray, MultiArrayDimension, String
 from nav_msgs.msg import Odometry
 from visualization_msgs.msg import Marker, MarkerArray
 
-
-SPEED_OF_SOUND = 343.0  # m/s in air at ~20 C
-SAMPLE_RATE = 16000     # Hz
-FRAME_SAMPLES = 2048    # ~128 ms per audio frame
-
-# Microphone coordinates in `audio_array_base_link` frame (meters)
-MIC_POSITIONS_BODY = np.array([
-    [0.095,  0.075, 0.000],  # 0: Front-Left (mic_fl_link)
-    [0.095, -0.075, 0.000],  # 1: Front-Right (mic_fr_link)
-    [-0.095, 0.075, 0.000],  # 2: Rear-Left (mic_rl_link)
-    [-0.095, -0.075, 0.000],  # 3: Rear-Right (mic_rr_link)
-    [-0.065, 0.000, 0.040],  # 4: Top-Center (mic_top_link)
-], dtype=np.float64)
-
-ARRAY_BASE_OFFSET_IN_FOOTPRINT = np.array([0.0, 0.0, 0.115], dtype=np.float64)
+from .audio_core import (
+    ARRAY_BASE_OFFSET_IN_FOOTPRINT,
+    FRAME_SAMPLES,
+    MIC_POSITIONS_BODY,
+    SAMPLE_RATE,
+    SPEED_OF_SOUND,
+    fractional_delay_fft,
+    propagate_sources_to_array,
+    quat_to_rot_matrix,
+    synthesize_coqui_call_frame,
+)
 
 # Survey mode: viewer-only simulation truth layer on /sim/coqui_truth_markers (latched complete scene)
 TRUTH_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -70,58 +66,6 @@ def make_marker(stamp, ns: str, mid: int, mtype: int, xyz, scale, rgba) -> Marke
     m.scale.x, m.scale.y, m.scale.z = (float(v) for v in scale)
     m.color.r, m.color.g, m.color.b, m.color.a = (float(v) for v in rgba)
     return m
-
-
-def quat_to_rot_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
-    """Convert quaternion (x, y, z, w) to 3x3 rotation matrix."""
-    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
-    if n < 1e-12:
-        return np.eye(3)
-    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
-    return np.array([
-        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw),     2 * (qx * qz + qy * qw)],
-        [2 * (qx * qy + qz * qw),     1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
-        [2 * (qx * qz - qy * qw),     2 * (qy * qz + qx * qw),     1 - 2 * (qx * qx + qy * qy)],
-    ], dtype=np.float64)
-
-
-def synthesize_coqui_call_frame(num_samples: int, sample_rate: int, phase_seed: float = 0.0) -> np.ndarray:
-    """Synthesize a single frame containing the two-note 'Co-Qui' call."""
-    t = np.arange(num_samples, dtype=np.float64) / float(sample_rate)
-    signal = np.zeros_like(t)
-
-    # Note 1: "CO" (~1160 Hz constant tone with Hann envelope in first 38% of frame)
-    n_co_start = int(0.05 * num_samples)
-    n_co_end = int(0.40 * num_samples)
-    t_co = t[n_co_start:n_co_end] - t[n_co_start]
-    env_co = np.sin(np.pi * np.linspace(0.0, 1.0, n_co_end - n_co_start)) ** 2
-    signal[n_co_start:n_co_end] = 0.75 * env_co * (
-        np.sin(2.0 * np.pi * 1160.0 * t_co + phase_seed)
-        + 0.25 * np.sin(2.0 * np.pi * 2320.0 * t_co + 0.5 * phase_seed)
-    )
-
-    # Note 2: "QUI" (~1820 Hz -> 2180 Hz upward chirp in 48%..92% of frame)
-    n_qui_start = int(0.48 * num_samples)
-    n_qui_end = int(0.92 * num_samples)
-    t_qui = t[n_qui_start:n_qui_end] - t[n_qui_start]
-    dur_qui = max(t_qui[-1], 1e-4)
-    f0, f1 = 1820.0, 2180.0
-    chirp_phase = 2.0 * np.pi * (f0 * t_qui + 0.5 * ((f1 - f0) / dur_qui) * (t_qui ** 2))
-    env_qui = np.sin(np.pi * np.linspace(0.0, 1.0, n_qui_end - n_qui_start)) ** 1.5
-    signal[n_qui_start:n_qui_end] = 1.0 * env_qui * (
-        np.sin(chirp_phase + phase_seed)
-        + 0.30 * np.sin(1.5 * chirp_phase)
-    )
-    return signal
-
-
-def fractional_delay_fft(signal: np.ndarray, delay_samples: float) -> np.ndarray:
-    """Apply exact sub-sample time delay via Fourier linear phase shift."""
-    n = len(signal)
-    spec = np.fft.rfft(signal)
-    freqs = np.fft.rfftfreq(n, d=1.0)
-    phase_shift = np.exp(-1j * 2.0 * np.pi * freqs * delay_samples)
-    return np.fft.irfft(spec * phase_shift, n=n)
 
 
 class CoquiSoundEmitterNode(Node):
@@ -145,6 +89,12 @@ class CoquiSoundEmitterNode(Node):
         self.declare_parameter('bout_gap_sec', 2.0)
         self.declare_parameter('seed', 0)
         self.declare_parameter('publish_truth_markers', False)
+        # Realism parameters: motor self-noise, overlapping chorus calls, multipath echo, ambient insects
+        self.declare_parameter('motor_noise_gain', 0.025)
+        self.declare_parameter('overlap_prob', 0.25)
+        self.declare_parameter('echo_gain', 0.12)
+        self.declare_parameter('echo_delay_ms', 18.0)
+        self.declare_parameter('ambient_clutter_prob', 0.20)
 
         self.env_name = self.get_parameter('env').value.strip().lower()
         self.call_period = float(self.get_parameter('call_period_sec').value)
@@ -157,7 +107,14 @@ class CoquiSoundEmitterNode(Node):
                            int(self.get_parameter('bout_calls_max').value))
         self.bout_gap = float(self.get_parameter('bout_gap_sec').value)
         self.publish_truth_markers = bool(self.get_parameter('publish_truth_markers').value)
+        self.motor_noise_gain = float(self.get_parameter('motor_noise_gain').value)
+        self.overlap_prob = float(self.get_parameter('overlap_prob').value)
+        self.echo_gain = float(self.get_parameter('echo_gain').value)
+        self.echo_delay_ms = float(self.get_parameter('echo_delay_ms').value)
+        self.ambient_clutter_prob = float(self.get_parameter('ambient_clutter_prob').value)
         self.rng = np.random.default_rng(int(self.get_parameter('seed').value))
+        self.robot_speed = 0.0
+        self.robot_wz = 0.0
 
         if self.survey:
             truth_file = str(self.get_parameter('truth_file').value)
@@ -280,14 +237,19 @@ class CoquiSoundEmitterNode(Node):
         q = msg.pose.pose.orientation
         self.robot_pos_world = np.array([p.x, p.y, p.z], dtype=np.float64)
         self.robot_rot_world = quat_to_rot_matrix(q.x, q.y, q.z, q.w)
+        tw = msg.twist.twist
+        self.robot_speed = math.hypot(tw.linear.x, tw.linear.y)
+        self.robot_wz = float(tw.angular.z)
 
     def _odom_fallback_cb(self, msg: Odometry):
-        if self.have_gt_odom:
-            return
-        p = msg.pose.pose.position
-        q = msg.pose.pose.orientation
-        self.robot_pos_world = np.array([p.x, p.y, p.z], dtype=np.float64)
-        self.robot_rot_world = quat_to_rot_matrix(q.x, q.y, q.z, q.w)
+        tw = msg.twist.twist
+        if not self.have_gt_odom:
+            p = msg.pose.pose.position
+            q = msg.pose.pose.orientation
+            self.robot_pos_world = np.array([p.x, p.y, p.z], dtype=np.float64)
+            self.robot_rot_world = quat_to_rot_matrix(q.x, q.y, q.z, q.w)
+            self.robot_speed = math.hypot(tw.linear.x, tw.linear.y)
+            self.robot_wz = float(tw.angular.z)
 
     def _lock_caller_cb(self, msg: Bool):
         if msg.data:
@@ -364,7 +326,6 @@ class CoquiSoundEmitterNode(Node):
         array_origin_world = (
             self.robot_pos_world + self.robot_rot_world @ ARRAY_BASE_OFFSET_IN_FOOTPRINT
         )
-        mic_world_pts = array_origin_world + (MIC_POSITIONS_BODY @ self.robot_rot_world.T)
 
         if self.survey:
             if elapsed < self.start_delay:
@@ -376,11 +337,9 @@ class CoquiSoundEmitterNode(Node):
             in_bout = True
         active = self.frogs[caller_idx]
         frog_pos = np.array(active['pos'], dtype=np.float64)
-
-        dists = np.linalg.norm(mic_world_pts - frog_pos[None, :], axis=1)
         center_dist = float(np.linalg.norm(array_origin_world - frog_pos))
 
-        # Synthesize source waveform if past start_delay, not in return-home pause, and in range
+        # Synthesize source waveform(s) if past start_delay, not in return-home pause, and in range
         is_calling = (
             in_bout
             and (elapsed >= self.start_delay)
@@ -388,22 +347,50 @@ class CoquiSoundEmitterNode(Node):
             and (center_dist <= self.max_range)
         )
         num_mics = MIC_POSITIONS_BODY.shape[0]
-        multi_ch = np.random.normal(0.0, self.noise_std, size=(num_mics, FRAME_SAMPLES))
-
+        sources = []
         if is_calling:
             self.call_counter += 1
+            pitch_scale = 0.97 + 0.012 * (caller_idx % 6)
             base_wave = synthesize_coqui_call_frame(
-                FRAME_SAMPLES, SAMPLE_RATE, phase_seed=0.37 * self.call_counter
+                FRAME_SAMPLES, SAMPLE_RATE, phase_seed=0.37 * self.call_counter, pitch_scale=pitch_scale
             )
-            tau_center = center_dist / SPEED_OF_SOUND
-            foliage_gain = float(active.get('foliage_attenuation', 1.0))
+            sources.append({
+                'pos': frog_pos,
+                'waveform': base_wave,
+                'foliage_attenuation': float(active.get('foliage_attenuation', 1.0)),
+            })
+            # Overlapping chorus calls (survey mode): a second frog may call in the same window
+            if self.survey and len(self.frogs) > 1 and self.overlap_prob > 0.0:
+                if float(self.rng.random()) < self.overlap_prob:
+                    others = [i for i in range(len(self.frogs)) if i != caller_idx]
+                    idx2 = int(self.rng.choice(others))
+                    f2 = self.frogs[idx2]
+                    p2 = np.array(f2['pos'], dtype=np.float64)
+                    if float(np.linalg.norm(array_origin_world - p2)) <= self.max_range:
+                        wave2 = synthesize_coqui_call_frame(
+                            FRAME_SAMPLES, SAMPLE_RATE,
+                            phase_seed=0.53 * self.call_counter + idx2,
+                            pitch_scale=0.97 + 0.012 * (idx2 % 6),
+                            start_frac=float(self.rng.uniform(0.05, 0.25)),
+                        )
+                        sources.append({
+                            'pos': p2,
+                            'waveform': wave2,
+                            'foliage_attenuation': float(f2.get('foliage_attenuation', 1.0)),
+                        })
 
-            for i in range(num_mics):
-                tau_i = float(dists[i]) / SPEED_OF_SOUND
-                rel_delay_samples = (tau_i - tau_center) * float(SAMPLE_RATE)
-                attenuation = foliage_gain / max(float(dists[i]), 0.35)
-                delayed = fractional_delay_fft(base_wave, rel_delay_samples)
-                multi_ch[i, :] += attenuation * delayed
+        clutter = self.survey and (float(self.rng.random()) < self.ambient_clutter_prob)
+        multi_ch = propagate_sources_to_array(
+            sources, array_origin_world, self.robot_rot_world,
+            noise_std=self.noise_std,
+            motor_speed=self.robot_speed,
+            motor_wz=self.robot_wz,
+            motor_noise_gain=self.motor_noise_gain if self.survey else 0.0,
+            echo_gain=self.echo_gain if self.survey else 0.0,
+            echo_delay_ms=self.echo_delay_ms,
+            ambient_clutter=clutter,
+            rng=self.rng,
+        )
 
         # Publish 5-channel audio frame
         msg = Float32MultiArray()

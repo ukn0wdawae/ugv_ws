@@ -1,0 +1,59 @@
+<!--
+  Commit-to-path Behavior Tree for unstructured off-road terrain:
+  Plans a global path once per goal and commits to it (no periodic 1 Hz left/right flip-flopping
+  around obstacles with symmetric routes). Replans only when:
+    1) a new goal arrives (GlobalUpdatedGoal),
+    2) the remaining path ahead becomes blocked in the global costmap (IsPathValid fails), or
+    3) FollowPath fails and triggers local-clear / back-up / spin recovery.
+
+  IMPORTANT: Never calls ClearEntireCostmap on global_costmap! Wiping the global costmap destroys
+  the explored-space map that frontier exploration and obstacle memory depend on.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateCommitToPath">
+        <RateController hz="2.0" name="PathValidityRate">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <Fallback name="ReplanOnlyIfInvalidOrNewGoal">
+              <ReactiveSequence name="KeepCommittedPath">
+                <Inverter>
+                  <GlobalUpdatedGoal/>
+                </Inverter>
+                <TruncatePathLocal input_path="{path}" output_path="{remaining_path}" distance_forward="100.0" distance_backward="0.0" robot_frame="base_footprint" transform_tolerance="0.2"/>
+                <IsPathValid path="{remaining_path}"/>
+              </ReactiveSequence>
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            </Fallback>
+            <Wait wait_duration="1"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <Sequence name="LocalClearAndReplan">
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          </Sequence>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          </Sequence>
+          <Sequence name="BackUpAndReplan">
+            <BackUp backup_dist="0.35" backup_speed="0.15"/>
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          </Sequence>
+          <Sequence name="SpinAndReplan">
+            <Spin spin_dist="1.57"/>
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          </Sequence>
+          <Wait wait_duration="3"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

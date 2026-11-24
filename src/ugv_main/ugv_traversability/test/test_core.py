@@ -12,8 +12,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from ugv_traversability.cloud_utils import apply, quat_to_rot, rot_to_rpy, rpy_to_rot  # noqa: E402
 from ugv_traversability.elevation_map import RollingElevationMap  # noqa: E402
-from ugv_traversability.features import (TraversabilityParams, compute_traversability,  # noqa: E402
-                                         fit_planes, robust_gradient, step_heights)
+from ugv_traversability.features import (TraversabilityParams, clamp_footprint_cost,  # noqa: E402
+                                         compute_traversability, fit_planes, robust_gradient, step_heights)
 
 RES = 0.05
 P = TraversabilityParams()
@@ -217,3 +217,73 @@ def test_footprint_on_side_slope_follows_the_slope():
         errs[name] = np.max(np.abs(m.h[disc] - (1.0 + slope * Y[disc])))
     assert errs['plane'] < 1e-6
     assert errs['flat'] > 0.015
+
+
+def test_clamp_footprint_cost_prevents_adjacent_obstacle_bleed():
+    """An obstacle right outside the chassis bleeds lethal cost onto the robot's standing cell
+    via the +/-0.15 m feature window. Clamping the footprint disc prevents Nav2 deadlock at t=0
+    while keeping all obstacle cells outside the footprint strictly lethal (100)."""
+    X, Y = grid()
+    h = np.zeros_like(X)
+    # 30 cm bush/curb starting just outside the 0.15 m footprint radius
+    h[X > 0.16] = 0.30
+    cost = compute_traversability(h, P)['cost']
+    c = X.shape[0] // 2
+    assert cost[c, c + 1] == 100  # without clamping, the +/-0.15 m window bleeds lethal inside the footprint
+
+    clamped = clamp_footprint_cost(cost, X, Y, 0.0, 0.0, radius=0.15, max_cost=50)
+    inside = (X ** 2 + Y ** 2) <= 0.15 ** 2
+    assert (clamped[inside] <= 50).all()
+    # every cell outside the footprint disc is completely untouched, and the curb wall stays lethal (100)
+    assert np.array_equal(clamped[~inside], cost[~inside])
+    assert (clamped[(X >= 0.20) & (X <= 0.30) & (np.abs(Y) < 0.5)] == 100).all()
+    # unknown (-1), free (0), and moderate cost (< 50) inside the footprint are untouched
+    mixed = np.array([[-1, 0, 30, 80, 100]], dtype=np.int8)
+    mx = np.array([[0.0, 0.02, 0.04, 0.06, 0.25]])
+    my = np.zeros_like(mx)
+    out = clamp_footprint_cost(mixed, mx, my, 0.0, 0.0, radius=0.15, max_cost=50)
+    assert out.tolist() == [[-1, 0, 30, 50, 100]]
+
+
+def test_obstacle_cost_ignores_smooth_steep_slope_and_flags_boulder():
+    """On a smooth 32 deg hillside, full traversability `cost` marks the hillside lethal (100),
+    whereas `obstacle_cost` stays near 0 on the smooth dirt slope and concave hill-bottom transition
+    while marking a boulder sitting on that slope lethal (100)."""
+    X, Y = grid()
+    # Smooth 32 deg ramp for X > 0 transitioning smoothly into flat ground for X <= 0
+    s = np.tan(np.radians(32.0))
+    h = np.where(X > 0.0, s * (X - 0.5 * (1.0 - np.exp(-2.0 * X))), 0.0)
+    # Add a 0.40 m tall boulder on the steep ramp at (1.5, 0.0)
+    boulder = ((X - 1.5) ** 2 + Y ** 2) <= 0.30 ** 2
+    h = h + np.where(boulder, 0.40, 0.0)
+
+    layers = compute_traversability(h, P)
+    smooth_steep = (X > 1.0) & (X < 2.2) & (np.abs(Y) > 0.8) & (np.abs(Y) < 1.8)
+    assert (layers['cost'][smooth_steep] == 100).all()
+    assert (layers['obstacle_cost'][smooth_steep] == 0).all()
+    # Smooth concave transition near X=0 stays non-lethal in obstacle_cost
+    concave = (np.abs(X) < 0.3) & (np.abs(Y) < 1.0)
+    assert (layers['obstacle_cost'][concave] < 70).all()
+    # Boulder edge on the steep slope is strictly lethal (100) in obstacle_cost
+    boulder_ring = ((X - 1.5) ** 2 + Y ** 2 <= 0.35 ** 2) & ((X - 1.5) ** 2 + Y ** 2 >= 0.22 ** 2)
+    assert (layers['obstacle_cost'][boulder_ring] == 100).mean() > 0.8
+
+
+def test_rolling_cost_grid_persists_non_lethal_slope_costs():
+    from ugv_traversability.elevation_map import RollingCostGrid
+    g = RollingCostGrid(length=40.0, resolution=0.20, recenter_dist=5.0, alpha=0.5, max_cost=90)
+    g.move_to(0.0, 0.0)
+    X, Y = grid()
+    local = np.zeros_like(X, dtype=np.int8)
+    local[Y > 0.5] = 70    # steep hillside north of trail
+    local[Y > 1.5] = 100   # lethal slope (must be capped at max_cost=90 in global_grid)
+    assert g.update_from_local(X, Y, local) > 0
+    # Move 10 m away (triggers recenter) and confirm scanned hillside cost persists
+    g.move_to(10.0, 0.0)
+    ix_flat = int(np.floor((0.0 - g.origin[0]) / g.res))
+    iy_flat = int(np.floor((0.0 - g.origin[1]) / g.res))
+    iy_hill = int(np.floor((1.0 - g.origin[1]) / g.res))
+    iy_steep = int(np.floor((1.8 - g.origin[1]) / g.res))
+    assert g.data[iy_flat, ix_flat] == 0
+    assert 60 <= g.data[iy_hill, ix_flat] <= 80
+    assert g.data[iy_steep, ix_flat] == 90  # strictly < 100 so StaticLayer never locks lethal cells

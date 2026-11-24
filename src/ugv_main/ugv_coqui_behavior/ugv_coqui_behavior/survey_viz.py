@@ -52,13 +52,18 @@ def _headline(state, info, frogs_found):
     if state == 'LISTEN':
         return 'LISTEN' + _num(g('listen_s'), '.0f', ' ', ' s') + _xy(g('at'), ' at '), ''
     if state == 'EXPLORE':
-        return 'EXPLORE -> station' + _xy(g('goal'), ' ') + _num(g('path_m'), '.1f', ', path ', ' m'), ''
+        kind = 'frontier' if g('mode') == 'frontier' else 'station'
+        return f'EXPLORE -> {kind}' + _xy(g('goal'), ' ') + _num(g('path_m'), '.1f', ', path ', ' m'), ''
     if state == 'RECOVER':
         return ('RECOVER' + _txt(g('reason'), ': ') + _num(g('candidates'), '.0f', ' (', ' candidates)'),
                 'clearing the costmaps, then planning again')
     if state == 'UNSTICK':
         return ('UNSTICK' + _num(g('fails'), '.0f', ': ', ' failed goals') + _xy(g('at'), ' at '),
                 'driving back to a place reached before')
+    if state == 'SLOPE_DESCENT':
+        mode = _txt(g('direction'), ', ')
+        return ('SLOPE_DESCENT' + _num(g('tilt_deg'), '.0f', ' (', ' deg') + mode + (')' if g('tilt_deg') is not None else ''),
+                'slowly descending slope around obstacles to flat ground')
     if state == 'HUNT':
         if g('step') is None:   # the call that starts the hunt
             return ('HUNT new call' + _num(g('bearing_deg'), '.0f', ': bearing ', ' deg') + _xy(g('heard_at'), ' at '),

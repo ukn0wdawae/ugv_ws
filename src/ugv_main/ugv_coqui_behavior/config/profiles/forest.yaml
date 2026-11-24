@@ -13,4 +13,4 @@ nav2:
     local_costmap:
       ros__parameters:
         inflation_layer:
-          inflation_radius: 0.45     # dense trunks: keep a little more room than the 0.55 default
+          inflation_radius: 0.35     # steep decay (6.0) stays centered in trails while allowing tight bush gaps

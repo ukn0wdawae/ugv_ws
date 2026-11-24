@@ -3,15 +3,23 @@
 # Runs in its own ROS domain and Gazebo port so it does not interfere with an interactive session.
 # Run inside the container (./docker/shell.sh), from /root/ugv_ws.
 #
-#   ./docker/run_coqui_survey_trial.sh [run_id] [seed] [max_mission_sec] [localization]
+#   ./docker/run_coqui_survey_trial.sh [run_id] [seed] [max_mission_sec] [localization] [profile] [randomize] [extra launch args...]
+#
+# Examples:
+#   ./docker/run_coqui_survey_trial.sh smoke_ekf 0 600 ekf forest false
+#   ./docker/run_coqui_survey_trial.sh rand_s3 3 2400 ekf forest true
+#   ./docker/run_coqui_survey_trial.sh custom_nav 0 1200 ekf hill false nav2_params_file:=/path/to/my_nav2.yaml
 #
 # Output: /root/ugv_ws/coqui_surveys/<run_id>/ (survey.yaml, frogs.geojson, photos/, events.jsonl,
-#         launch.log, grade.json)
+#         launch.log, grade.json, truth_used.yaml)
 set -eo pipefail
 RUN=${1:-trial_$(date +%H%M%S)}
 SEED=${2:-0}
 MAXSEC=${3:-2400}
-LOC=${4:-perfect}
+LOC=${4:-ekf}
+PROFILE=${5:-forest}
+RANDOMIZE=${6:-false}
+shift $(( $# > 6 ? 6 : $# ))
 OUT=/root/ugv_ws/coqui_surveys/$RUN
 mkdir -p "$OUT"
 
@@ -21,9 +29,24 @@ export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-77}
 export GAZEBO_MASTER_URI=${GAZEBO_MASTER_URI:-http://localhost:11399}
 export UGV_MODEL=ugv_pro_audio GAZEBO_MODEL_DATABASE_URI=""
 
-echo "trial $RUN seed=$SEED max=${MAXSEC}s localization=$LOC domain=$ROS_DOMAIN_ID"
-setsid ros2 launch ugv_coqui_behavior coqui_survey.launch.py sim:=true gui:=false seed:="$SEED" \
-  run_id:="$RUN" max_mission_sec:="$MAXSEC" localization:="$LOC" > "$OUT/launch.log" 2>&1 &
+# Refuse to run if stale nodes exist in this trial ROS domain
+STALE=$(timeout 4 ros2 node list 2>/dev/null | grep -E '^/(coqui_sound_emitter|coqui_survey|bt_navigator)$' || true)
+if [ -n "$STALE" ]; then
+  echo "Stale nodes running in ROS_DOMAIN_ID=${ROS_DOMAIN_ID}: $STALE"
+  exit 1
+fi
+
+TRUTH_ARGS=()
+GRADE_TRUTH_ARGS=(--profile "$PROFILE")
+if [ "$RANDOMIZE" = "true" ] && [ "$SEED" != "0" ]; then
+  TRUTH_OUT="$OUT/truth_used.yaml"
+  TRUTH_ARGS+=(randomize:=true "truth_out:=$TRUTH_OUT")
+  GRADE_TRUTH_ARGS=(--truth "$TRUTH_OUT")
+fi
+
+echo "trial $RUN profile=$PROFILE seed=$SEED randomize=$RANDOMIZE max=${MAXSEC}s localization=$LOC domain=$ROS_DOMAIN_ID"
+setsid ros2 launch ugv_coqui_behavior coqui_survey.launch.py profile:="$PROFILE" sim:=true gui:=false seed:="$SEED" \
+  run_id:="$RUN" max_mission_sec:="$MAXSEC" localization:="$LOC" "${TRUTH_ARGS[@]}" "$@" > "$OUT/launch.log" 2>&1 &
 PID=$!
 trap 'kill -INT -- -$PID 2>/dev/null; sleep 5; kill -9 -- -$PID 2>/dev/null; true' EXIT
 
@@ -39,4 +62,4 @@ while true; do
   if (( $(date +%s) - T0 > WALL_LIMIT )); then echo "wall-clock limit"; break; fi
   tail -n 1 "$OUT/events.jsonl" 2>/dev/null | cut -c1-200 || true
 done
-ros2 run ugv_coqui_behavior eval_survey "$OUT/survey.yaml" --json "$OUT/grade.json" | tee "$OUT/grade.txt"
+ros2 run ugv_coqui_behavior eval_survey "$OUT/survey.yaml" "${GRADE_TRUTH_ARGS[@]}" --json "$OUT/grade.json" | tee "$OUT/grade.txt"

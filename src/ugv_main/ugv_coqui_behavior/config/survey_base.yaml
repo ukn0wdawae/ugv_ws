@@ -8,21 +8,50 @@
 coqui_survey:
   ros__parameters:
     use_sim_time: true
-    # --- coverage: listening stations on a grid over the survey area
-    station_spacing_m: 6.0        # grid of candidate stations
-    cover_radius_m: 7.0           # a station "covers" cells this close (calls carry 20 m+, keep margin)
-    station_listen_sec: 8.0       # stand still and listen this long (frogs call in bouts)
+    # --- coverage: continuous frontier exploration + fallback listening stations over the survey area
+    use_frontiers: true           # industry-standard frontier exploration with continuous on-the-fly handoff
+    min_frontier_cells: 4         # ignore tiny 1-3 cell unknown speckles
+    frontier_min_dist_m: 1.5      # ignore frontiers already inside immediate sensor radius
+    frontier_handoff_m: 2.0       # preemptively switch to the next frontier before slowing down
+    frontier_size_weight: 0.15    # reward bigger unexplored openings
+    frontier_heading_penalty_m: 3.5  # strongly prefer sweeping forward rather than bouncing back and forth
+    whisper_bias_m: 5.0           # pull frontier exploration toward faint Tier-1 frog bearings
+    trajectory_cover_step_m: 1.5  # sample driven trajectory for close-pass coverage
+    moving_cover_radius_m: 3.5    # driving past only clears 3.5 m (frogs are silent ~60% of passes)
+    station_spacing_m: 6.0        # fallback grid of coverage stations (also tracks survey % progress)
+    cover_radius_m: 7.0           # a stationary listen covers cells this close
+    station_listen_sec: 4.0       # brief pause at fallback stations (robot also listens continuously while moving)
     snap_search_m: 2.0            # move a station onto free ground up to this far
     failed_radius_m: 1.0
+    failed_retry_sec: 90.0        # retry previously failed goals after approaching from a new angle
+    max_cooldown_resets: 2        # never abort mission just because all remaining stations fell into cooldown
     # --- costmap reading (Nav2 global costmap, 0..100)
     costmap_topic: /global_costmap/costmap
+    traversability_grid_topic: /terrain_traversability/grid
+    odom_topic: /odom
     lethal_cost: 65               # >= this is treated as not drivable for goal selection
-    clearance_m: 0.25             # robot half-diagonal ~0.17 m + margin
-    # --- detection / triangulation
-    min_detection_snr_db: 10.0
-    detections_to_trigger: 2      # consistent bearings within 4 s before starting a hunt
-    known_frog_radius_m: 2.0      # a call/estimate this close to a recorded frog is that frog
-    hunt_listen_sec: 5.0
+    clearance_m: 0.18             # robot half-diagonal ~0.17 m + margin (generalizes to tighter paths)
+    terrain_cost_weight: 0.08     # penalize steep-slope vantages/frontiers so easy low-slope ground wins
+    path_slope_weight: 3.0        # weight Nav2 path cost by cell slope cost when ranking reachable goals
+    # --- detection / two-tier acoustic tracking & triangulation
+    min_detection_snr_db: 7.0     # Tier 1: passively bank rays + bias frontier exploration (out to ~22 m)
+    hunt_trigger_snr_db: 12.0     # Tier 2: loud/clear call (~<10 m) interrupts explore to lock on
+    passive_window_sec: 120.0     # keep passive bearings for 2 min to seed hunts & cross-triangulate quiet frogs
+    detections_to_trigger: 2      # consistent loud bearings within 4 s before starting a hunt
+    known_frog_radius_m: 2.0      # a triangulated estimate this close to a recorded frog is that frog
+    known_bearing_radius_m: 1.1   # tighter radius for masking incoming bearings (avoids +-30 deg blind cones)
+    frog_keepout_m: 0.9           # never plan goals closer than this to an already-recorded frog
+    stationary_only_triangulation: true   # use only stationary bearings for positions (eliminates motion smear)
+    stationary_max_vx: 0.05       # m/s threshold for stationary bearing acceptance
+    stationary_max_wz: 0.12       # rad/s threshold for stationary bearing acceptance
+    stationary_hold_sec: 0.25     # must stay still this long before bearing counts as stationary
+    hunt_listen_sec: 4.0          # max listen time per hunt step (exits early once hunt_min_new_rays arrive)
+    hunt_min_new_rays: 2
+    quiet_step_limit_sec: 20.0    # stop wasting baseline steps if frog stops calling mid-hunt
+    partial_min_parallax_deg: 12.0
+    reject_empty_open_photo: true # reject open-ground clear-LOS fixes when camera sees no frog
+    pose_sigma_m: 0.08            # honest pose uncertainty floor added to triangulation uncertainty
+    adaptive_steps: true          # scale hunt baseline step length with estimated frog range (down to 0.45 m)
     step_min_m: 0.8
     step_max_m: 1.8
     step_angles: 12
@@ -66,14 +95,52 @@ coqui_survey:
     # --- mission
     max_mission_sec: 3600.0
     return_home: true
+    home_tolerance_m: 1.2
+    home_max_stages: 20
     output_dir: /root/ugv_ws/coqui_surveys
-    nav_goal_timeout_sec: 180.0
-    plan_check_max: 6
+    nav_goal_timeout_sec: 90.0
+    plan_check_max: 4
     global_frame: map
     base_frame: base_footprint
+    # --- IMU steep-slope stall detection, obstacle-avoiding slow descent, & continuous safety watchdog
+    slope_recovery_enabled: true
+    safety_monitor_enabled: true
+    imu_topic: /imu
+    obstacle_grid_topic: /terrain_traversability/obstacle_grid
+    slope_cmd_vel_topic: /cmd_vel_nav
+    cmd_vel_monitor_topic: /cmd_vel
+    slope_stall_deg: 18.0         # IMU tilt where blocked skid-steer turning triggers downhill descent
+    slope_steep_deg: 22.0         # IMU tilt where general no-progress wheelspin triggers descent
+    slope_rollover_roll_deg: 22.0 # immediate side-hill roll guard (prevents tipping while turning on slopes)
+    slope_rollover_tilt_deg: 28.0 # immediate high-tilt guard (prevents climbing into >28 deg faces)
+    slope_rollover_confirm_sec: 0.40
+    slope_max_drivable_deg: 65.0  # sustained tilt above this = capsized -> abort mission immediately
+    slope_capsize_confirm_sec: 0.40
+    slope_flat_deg: 14.0          # IMU tilt threshold for flat/safe ground to exit descent
+    slope_flat_confirm_sec: 1.0
+    slope_turn_stall_sec: 2.5     # seconds of blocked turn on steep slope before cancelling Nav2
+    slope_stall_sec: 4.0          # seconds of no progress on steep slope before cancelling Nav2
+    slope_descent_speed_max: 0.24 # m/s slow controlled descent speed on open slope
+    slope_descent_speed_min: 0.12 # m/s cautious speed while steering around obstacles
+    slope_descent_max_wz: 0.85    # rad/s gentle steering arcs (never spinning in place)
+    slope_descent_clearance_m: 0.22
+    slope_descent_stop_dist_m: 0.45
+    slope_descent_lookahead_m: 1.60
+    slope_descent_lethal_cost: 70
+    slope_descent_allow_unknown: false  # never descend blindly into unseen ground / drop-offs
+    slope_descent_max_sec: 35.0
+    slope_descent_max_dist_m: 6.0
+    fall_drop_m: 1.5              # abort on >= 1.5 m vertical drop within fall_window_sec
+    fall_window_sec: 4.0
+    fall_vz_mps: 1.2              # abort on sustained downward speed >= 1.2 m/s
+    runaway_speed_mps: 1.5        # abort on sustained 3D speed >= 1.5 m/s (>2x max cmd_vel)
+    tumble_rate_rps: 2.5          # abort on sustained roll/pitch tumble rate >= 2.5 rad/s
+    fall_confirm_sec: 0.40
+    sensor_stale_sec: 5.0         # stop & abort if IMU/costmap/traversability/TF goes stale
 
 mic_array_localizer:
   ros__parameters:
     use_sim_time: true
+    snr_threshold_db: 6.0
     ray_gate_deg: 30.0            # during a hunt, ignore bearings that point away from the estimate
     gate_min_range_m: 1.5

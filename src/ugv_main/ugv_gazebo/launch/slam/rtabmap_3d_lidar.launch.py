@@ -15,8 +15,16 @@ def launch_setup(context, *args, **kwargs):
     use_sim_time = LaunchConfiguration('use_sim_time')
     queue_size = LaunchConfiguration('queue_size')
     qos = LaunchConfiguration('qos')
-    localization = LaunchConfiguration('localization')
+    # Evaluate boolean localization safely inside OpaqueFunction instead of IfCondition/UnlessCondition,
+    # so parent launches declaring a string `localization` arg (e.g. `localization:=slam`) never crash.
+    rtabmap_loc_arg = LaunchConfiguration('rtabmap_localization').perform(context).strip()
+    if rtabmap_loc_arg:
+        localization_mode = _as_bool(rtabmap_loc_arg)
+    else:
+        localization_mode = _as_bool(LaunchConfiguration('localization').perform(context))
     force_3dof = _as_bool(LaunchConfiguration('force_3dof').perform(context))
+    use_rviz = _as_bool(LaunchConfiguration('use_rviz').perform(context))
+    use_rtabmap_viz = _as_bool(LaunchConfiguration('use_rtabmap_viz').perform(context))
 
     param_file = os.path.join(
         get_package_share_directory('ugv_gazebo'), 'param', 'rtabmap_slam.yaml')
@@ -79,45 +87,26 @@ def launch_setup(context, *args, **kwargs):
         remappings=remappings,
     )
 
-    rtabmap_slam_node_slam = Node(
-        condition=UnlessCondition(localization),
-        package='rtabmap_slam',
-        executable='rtabmap',
-        output='screen',
-        parameters=parameters,
-        remappings=remappings,
-        arguments=['-d'],
-    )
-
-    rtabmap_slam_node_localization = Node(
-        condition=IfCondition(localization),
-        package='rtabmap_slam',
-        executable='rtabmap',
-        output='screen',
-        parameters=parameters + [
-            {'Mem/IncrementalMemory': 'False',
-             'Mem/InitWMWithAllNodes': 'True'},
-        ],
-        remappings=remappings,
-    )
-
-    rviz2_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        output='screen',
-        arguments=['-d', rviz_slam_3d_config],
-        condition=IfCondition(LaunchConfiguration('use_rviz')),
-    )
-
-    rtabmap_viz_node = Node(
-        package='rtabmap_viz',
-        executable='rtabmap_viz',
-        output='screen',
-        parameters=parameters,
-        remappings=remappings,
-        condition=UnlessCondition(LaunchConfiguration('use_rviz')),
-    )
+    if localization_mode:
+        rtabmap_node = Node(
+            package='rtabmap_slam',
+            executable='rtabmap',
+            output='screen',
+            parameters=parameters + [
+                {'Mem/IncrementalMemory': 'False',
+                 'Mem/InitWMWithAllNodes': 'True'},
+            ],
+            remappings=remappings,
+        )
+    else:
+        rtabmap_node = Node(
+            package='rtabmap_slam',
+            executable='rtabmap',
+            output='screen',
+            parameters=parameters,
+            remappings=remappings,
+            arguments=['-d'],
+        )
 
     robot_pose_publisher_node = Node(
         package='robot_pose_publisher',
@@ -126,7 +115,7 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         emulate_tty=True,
         parameters=[
-            {'use_sim_time': True},
+            {'use_sim_time': use_sim_time},
             {'is_stamped': True},
             {'map_frame': 'map'},
             {'base_frame': 'base_footprint'},
@@ -135,12 +124,26 @@ def launch_setup(context, *args, **kwargs):
 
     nodes = [
         rgbd_sync_node,
-        rtabmap_slam_node_slam,
-        rtabmap_slam_node_localization,
-        rviz2_node,
-        rtabmap_viz_node,
+        rtabmap_node,
         robot_pose_publisher_node,
     ]
+    if use_rviz:
+        nodes.append(Node(
+            package='rviz2',
+            executable='rviz2',
+            name='rviz2',
+            output='screen',
+            arguments=['-d', rviz_slam_3d_config],
+            parameters=[{'use_sim_time': use_sim_time}],
+        ))
+    elif use_rtabmap_viz:
+        nodes.append(Node(
+            package='rtabmap_viz',
+            executable='rtabmap_viz',
+            output='screen',
+            parameters=parameters,
+            remappings=remappings,
+        ))
 
     # Static hills: split the 3D lidar cloud into ground / obstacles by surface normals
     # so Nav2 costmaps (param/slam_nav_terrain.yaml) do not treat slopes as walls.
@@ -185,10 +188,16 @@ def generate_launch_description():
             description='QoS used for input sensor topics'),
         DeclareLaunchArgument(
             'localization', default_value='false',
-            description='Launch in localization mode.'),
+            description='Launch in localization mode (true/false).'),
+        DeclareLaunchArgument(
+            'rtabmap_localization', default_value='',
+            description='Explicit override for RTAB-Map localization-only mode (avoids parent arg collisions).'),
         DeclareLaunchArgument(
             'use_rviz', default_value='false',
             description='Whether to launch RViz2'),
+        DeclareLaunchArgument(
+            'use_rtabmap_viz', default_value='false',
+            description='Whether to launch rtabmap_viz GUI when use_rviz is false'),
         DeclareLaunchArgument(
             'rviz_config', default_value='',
             description='Optional custom RViz2 config file path'),

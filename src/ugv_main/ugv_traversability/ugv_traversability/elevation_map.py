@@ -74,8 +74,45 @@ class RollingElevationMap:
         return out
 
     # ------------------------------------------------------------------ update
-    def insert(self, pts, stamp):
-        """Fuse an (N, 3) array of points expressed in the map frame."""
+    @staticmethod
+    def _estimate_scan_tilt(ux, uy, dz, sx, sy, max_tilt_rad=0.055, max_dz=0.05):
+        """Estimate rigid scan-to-map attitude/height offset (a*dx + b*dy + c) via 2-pass Huber IRLS.
+
+        Cancels per-scan IMU roll/pitch jitter (0.5-1.5 deg) that otherwise creates multi-centimetre
+        washboard steps between adjacent lidar rings, while ignoring local curbs/boulders/trunks.
+        """
+        dx = ux - float(sx)
+        dy = uy - float(sy)
+        # Keep plausible ground overlaps (exclude walls/trunks > 8 cm above ground)
+        m = np.abs(dz) < 0.08
+        if int(m.sum()) < 20:
+            return 0.0, 0.0, 0.0
+        X = np.stack([dx[m], dy[m], np.ones(int(m.sum()), dtype=np.float64)], axis=1)
+        y = dz[m]
+        w = np.ones_like(y)
+        sol = np.zeros(3, dtype=np.float64)
+        for _ in range(3):
+            Xw = X * w[:, None]
+            H = Xw.T @ X
+            if abs(np.linalg.det(H)) < 1e-6:
+                return 0.0, 0.0, 0.0
+            sol = np.linalg.solve(H, Xw.T @ y)
+            res = np.abs(y - X @ sol)
+            # Huber weight with 1.5 cm transition so a real 4-5 cm curb has minimal leverage
+            w = np.where(res <= 0.015, 1.0, 0.015 / np.maximum(res, 1e-6))
+        a = float(np.clip(sol[0], -max_tilt_rad, max_tilt_rad))
+        b = float(np.clip(sol[1], -max_tilt_rad, max_tilt_rad))
+        c = float(np.clip(sol[2], -max_dz, max_dz))
+        return a, b, c
+
+    def insert(self, pts, stamp, sensor_xy=None, range_weight_scale=0.0, stabilize_attitude=False):
+        """Fuse an (N, 3) array of points expressed in the map frame.
+
+        When `sensor_xy` and `stabilize_attitude=True` are given, estimates and removes the rigid
+        per-scan roll/pitch/z offset against overlapping map cells before fusing (suppresses IMU
+        attitude noise without blurring curbs, trunks, or true terrain slope).
+        When `range_weight_scale > 0`, per-cell fusion weight decays with horizontal distance `r`.
+        """
         if self.origin is None or len(pts) == 0:
             return 0
         ix, iy = self.world_to_index(pts[:, 0], pts[:, 1])
@@ -89,9 +126,27 @@ class RollingElevationMap:
         uniq, start = np.unique(flat, return_index=True)
         zmax = np.maximum.reduceat(z, start)
         cnt = np.diff(np.append(start, len(flat)))
+
         hv = self.h.ravel()
         cur = hv[uniq]
-        new = np.where(np.isfinite(cur), cur + self.alpha * (zmax - cur), zmax)
+        ux = uy = None
+        if sensor_xy is not None and (stabilize_attitude or range_weight_scale > 0.0):
+            ux = self.origin[0] + ((uniq % self.n) + 0.5) * self.res
+            uy = self.origin[1] + ((uniq // self.n) + 0.5) * self.res
+
+        if stabilize_attitude and sensor_xy is not None:
+            ov = np.isfinite(cur)
+            if int(ov.sum()) >= 20:
+                a, b, c = self._estimate_scan_tilt(ux[ov], uy[ov], zmax[ov] - cur[ov], sensor_xy[0], sensor_xy[1])
+                zmax = zmax - (a * (ux - float(sensor_xy[0])) + b * (uy - float(sensor_xy[1])) + c)
+
+        if sensor_xy is not None and range_weight_scale > 0.0:
+            r2 = (ux - float(sensor_xy[0])) ** 2 + (uy - float(sensor_xy[1])) ** 2
+            alpha_eff = self.alpha / (1.0 + r2 / (float(range_weight_scale) ** 2))
+            alpha_eff = np.maximum(alpha_eff, min(self.alpha, 0.08))
+        else:
+            alpha_eff = self.alpha
+        new = np.where(np.isfinite(cur), cur + alpha_eff * (zmax - cur), zmax)
         hv[uniq] = new
         self.stamp.ravel()[uniq] = stamp
         self.hits.ravel()[uniq] += cnt.astype(np.int32)
@@ -118,3 +173,75 @@ class RollingElevationMap:
         old = (now - self.stamp) > self.max_age
         self.h[old] = np.nan
         self.hits[old] = 0
+
+
+class RollingCostGrid:
+    """Coarse persistent rolling cost grid (int8, -1 unknown, 0..max_cost) for Nav2 global_costmap.
+
+    Accumulates continuous non-lethal slope/roughness costs across a wide area (e.g. 110 m @ 0.20 m)
+    so Nav2's global planner prefers low-slope flat trails over steep hillsides without ever painting
+    un-clearable lethal cells (lethal obstacles remain owned by Nav2's obstacle_layer).
+    """
+
+    def __init__(self, length=110.0, resolution=0.20, recenter_dist=5.0, alpha=0.5, max_cost=90):
+        self.res = float(resolution)
+        self.n = int(round(length / resolution))
+        if self.n % 2:
+            self.n += 1
+        self.recenter_dist = float(recenter_dist)
+        self.alpha = float(alpha)
+        self.max_cost = int(np.clip(max_cost, 1, 95))
+        self.data = np.full((self.n, self.n), -1, dtype=np.int8)
+        self.origin = None
+
+    @property
+    def length(self):
+        return self.n * self.res
+
+    def center(self):
+        return self.origin + self.length / 2.0
+
+    def move_to(self, x, y):
+        snap = lambda v: np.floor(v / self.res) * self.res  # noqa: E731
+        new_origin = np.array([snap(x) - self.length / 2.0, snap(y) - self.length / 2.0])
+        if self.origin is None:
+            self.origin = new_origin
+            return
+        if np.hypot(*(self.center() - (x, y))) < self.recenter_dist:
+            return
+        d = np.round((new_origin - self.origin) / self.res).astype(int)
+        dx, dy = int(d[0]), int(d[1])
+        n = self.n
+        out = np.full((n, n), -1, dtype=np.int8)
+        if abs(dx) < n and abs(dy) < n:
+            out[max(0, -dy):n - max(0, dy), max(0, -dx):n - max(0, dx)] = \
+                self.data[max(0, dy):n - max(0, -dy), max(0, dx):n - max(0, -dx)]
+        self.data = out
+        self.origin = self.origin + d * self.res
+
+    def update_from_local(self, X, Y, local_cost):
+        """Fuse known cells of a local cost grid into the coarse persistent cost grid."""
+        if self.origin is None:
+            return 0
+        known = local_cost >= 0
+        if not known.any():
+            return 0
+        xs = X[known]
+        ys = Y[known]
+        vals = np.clip(local_cost[known].astype(np.float32), 0.0, float(self.max_cost))
+        ix = np.floor((xs - self.origin[0]) / self.res).astype(np.int64)
+        iy = np.floor((ys - self.origin[1]) / self.res).astype(np.int64)
+        ok = (ix >= 0) & (iy >= 0) & (ix < self.n) & (iy < self.n)
+        if not ok.any():
+            return 0
+        flat = iy[ok] * self.n + ix[ok]
+        vals = vals[ok]
+        uniq, inv = np.unique(flat, return_inverse=True)
+        sums = np.bincount(inv, weights=vals)
+        cnts = np.bincount(inv)
+        mean_v = sums / np.maximum(cnts, 1)
+        dv = self.data.ravel()
+        cur = dv[uniq]
+        blended = np.where(cur >= 0, cur.astype(np.float32) + self.alpha * (mean_v - cur.astype(np.float32)), mean_v)
+        dv[uniq] = np.clip(np.round(blended), 0, self.max_cost).astype(np.int8)
+        return len(uniq)

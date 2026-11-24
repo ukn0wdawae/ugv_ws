@@ -11478,7 +11478,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -11583,7 +11583,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -11688,7 +11688,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -11793,7 +11793,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -11898,7 +11898,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12003,7 +12003,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12108,7 +12108,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12213,7 +12213,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12318,7 +12318,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12423,7 +12423,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12528,7 +12528,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12633,7 +12633,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12738,7 +12738,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12843,7 +12843,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -12948,7 +12948,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13053,7 +13053,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13158,7 +13158,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13263,7 +13263,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13368,7 +13368,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13473,7 +13473,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13578,7 +13578,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13683,7 +13683,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13788,7 +13788,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13893,7 +13893,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -13998,7 +13998,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14103,7 +14103,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14208,7 +14208,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14313,7 +14313,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14418,7 +14418,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14523,7 +14523,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14628,7 +14628,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14733,7 +14733,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14838,7 +14838,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -14943,7 +14943,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -15104,7 +15104,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -15521,7 +15521,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -15626,7 +15626,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -15731,7 +15731,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -15836,7 +15836,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -15941,7 +15941,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -16046,7 +16046,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -16151,7 +16151,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -16256,7 +16256,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -19354,7 +19354,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -19459,7 +19459,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -19564,7 +19564,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -19669,7 +19669,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -19774,7 +19774,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -19879,7 +19879,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -19984,7 +19984,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20089,7 +20089,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20194,7 +20194,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20299,7 +20299,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20404,7 +20404,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20509,7 +20509,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20614,7 +20614,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20719,7 +20719,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20824,7 +20824,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -20929,7 +20929,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -21034,7 +21034,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -21139,7 +21139,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -21244,7 +21244,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -21349,7 +21349,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22206,7 +22206,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22311,7 +22311,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22416,7 +22416,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22521,7 +22521,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22626,7 +22626,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22731,7 +22731,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22836,7 +22836,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -22941,7 +22941,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -23046,7 +23046,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -23151,7 +23151,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -23256,7 +23256,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -23361,7 +23361,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -23466,7 +23466,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -23795,7 +23795,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -23900,7 +23900,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -24005,7 +24005,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -24110,7 +24110,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -24215,7 +24215,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -24320,7 +24320,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -24425,7 +24425,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -24842,7 +24842,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -24947,7 +24947,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -25052,7 +25052,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -25157,7 +25157,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -25262,7 +25262,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -25367,7 +25367,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -25472,7 +25472,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -25577,7 +25577,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -25682,7 +25682,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -26099,7 +26099,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -26204,7 +26204,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -26309,7 +26309,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -26414,7 +26414,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -26519,7 +26519,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -26624,7 +26624,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -26729,7 +26729,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -28322,7 +28322,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -28427,7 +28427,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -28532,7 +28532,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -28637,7 +28637,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -28742,7 +28742,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -28847,7 +28847,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -28952,7 +28952,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29057,7 +29057,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29162,7 +29162,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29267,7 +29267,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29372,7 +29372,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29477,7 +29477,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29582,7 +29582,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29687,7 +29687,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29792,7 +29792,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -29897,7 +29897,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -30002,7 +30002,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -30539,7 +30539,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -31148,7 +31148,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -31253,7 +31253,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>
@@ -31358,7 +31358,7 @@
               <threshold>1e+06</threshold>
             </bounce>
             <contact>
-              <collide_without_contact>0</collide_without_contact>
+              <collide_without_contact>1</collide_without_contact>
               <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
               <collide_bitmask>1</collide_bitmask>
               <ode>

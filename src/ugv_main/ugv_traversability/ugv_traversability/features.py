@@ -23,6 +23,7 @@ class TraversabilityParams:
     resolution: float = 0.05          # m / cell
     plane_radius: float = 0.15        # half window for slope/roughness plane fit (m)
     step_radius: float = 0.10         # half window for step detection (m)
+    step_outlier_trim: int = 0        # trim k highest/lowest cells in step window when >= 2k+3 cells valid
     min_valid_ratio: float = 0.30     # fraction of window cells needed for a plane fit
 
     slope_safe_deg: float = 12.0      # below: no cost
@@ -157,30 +158,53 @@ def robust_gradient(h, res, radius, decimate=2):
     return out[0], out[1]
 
 
-def step_heights(h, res, radius, gx, gy):
+def step_heights(h, res, radius, gx, gy, trim=0):
     """Spread of slope-corrected heights within the step window.
 
     For every centre cell the neighbours' heights are corrected by the robust
-    local gradient (``gx``, ``gy``) and the spread (max - min) of what remains
-    is the step a wheel has to climb.  Smooth slopes give ~0, a curb gives
-    ~its full height even on a slope.  Where no gradient is available the raw
-    spread is used (conservative).
+    local gradient (``gx``, ``gy``) and the spread (max - min, or trimmed spread
+    when ``trim > 0`` and enough cells are valid) of what remains is the step a
+    wheel has to climb.  Smooth slopes give ~0, a curb gives ~its full height
+    even on a slope, while single-cell attitude/lidar spikes are rejected when
+    ``trim >= 1``.  Where no gradient is available the raw spread is used.
     """
     k = max(1, int(round(radius / res)))
-    rmax = np.full(h.shape, -np.inf)
-    rmin = np.full(h.shape, np.inf)
-    cnt = np.zeros(h.shape)
     gxx = np.nan_to_num(gx)
     gyy = np.nan_to_num(gy)
+    trim = max(0, int(trim))
+    if trim == 0:
+        rmax = np.full(h.shape, -np.inf)
+        rmin = np.full(h.shape, np.inf)
+        cnt = np.zeros(h.shape)
+        for dy in range(-k, k + 1):
+            for dx in range(-k, k + 1):
+                hs = _shift(h, dy, dx)
+                r = hs - res * (gxx * dx + gyy * dy)
+                f = np.isfinite(r)
+                rmax = np.where(f, np.maximum(rmax, r), rmax)
+                rmin = np.where(f, np.minimum(rmin, r), rmin)
+                cnt += f
+        step = rmax - rmin
+        step[(cnt < 2) | ~np.isfinite(h)] = np.nan
+        return step
+
+    w = 2 * k + 1
+    stack = np.empty((w * w, h.shape[0], h.shape[1]), dtype=np.float64)
+    idx = 0
     for dy in range(-k, k + 1):
         for dx in range(-k, k + 1):
             hs = _shift(h, dy, dx)
-            r = hs - res * (gxx * dx + gyy * dy)
-            f = np.isfinite(r)
-            rmax = np.where(f, np.maximum(rmax, r), rmax)
-            rmin = np.where(f, np.minimum(rmin, r), rmin)
-            cnt += f
-    step = rmax - rmin
+            stack[idx] = hs - res * (gxx * dx + gyy * dy)
+            idx += 1
+    # Sort along window axis; NaNs sort to the end
+    s = np.sort(stack, axis=0)
+    cnt = np.isfinite(s).sum(axis=0)
+    # Trim `trim` extremes from each end only when enough cells exist (>= 2*trim + 3)
+    eff_trim = np.where(cnt >= 2 * trim + 3, trim, 0)
+    hi_idx = np.clip(cnt - 1 - eff_trim, 0, w * w - 1)
+    lo_idx = np.clip(eff_trim, 0, w * w - 1)
+    yy, xx = np.indices(h.shape)
+    step = s[hi_idx, yy, xx] - s[lo_idx, yy, xx]
     step[(cnt < 2) | ~np.isfinite(h)] = np.nan
     return step
 
@@ -194,7 +218,7 @@ def compute_traversability(h, p: TraversabilityParams):
     a, b, zc, rough, ok = fit_planes(h, p.resolution, p.plane_radius, p.min_valid_ratio)
     slope = np.degrees(np.arctan(np.hypot(a, b)))
     gx, gy = robust_gradient(h, p.resolution, p.plane_radius)
-    step = step_heights(h, p.resolution, p.step_radius, gx, gy)
+    step = step_heights(h, p.resolution, p.step_radius, gx, gy, trim=p.step_outlier_trim)
 
     known = np.isfinite(h) & (np.isfinite(step) | ok)
     s_n = np.where(np.isfinite(slope), _norm(slope, p.slope_safe_deg, p.slope_critical_deg), 0.0)
@@ -209,7 +233,46 @@ def compute_traversability(h, p: TraversabilityParams):
     cost = np.round(99.0 * np.clip(danger, 0, 1)).astype(np.int16)
     cost[lethal] = 100
     cost[~known] = -1
+
+    # Non-slope geometric obstacle cost (boulders, trunks, bushes, vertical faces >= 50 deg):
+    # stays 0 on smooth steep dirt slopes and concave hill-bottom transitions so slope-descent
+    # recovery can steer around real physical obstacles without mistaking the hillside for a wall.
+    wall_deg = max(50.0, 2.0 * p.slope_critical_deg)
+    obs_danger = np.maximum(w.get('step', 1.0) * t_n, w.get('roughness', 1.0) * r_n)
+    obs_lethal = ((np.nan_to_num(step) >= p.step_critical) |
+                  (np.nan_to_num(rough) >= p.roughness_critical) |
+                  (np.nan_to_num(slope) >= wall_deg))
+    obstacle_cost = np.round(99.0 * np.clip(obs_danger, 0, 1)).astype(np.int16)
+    obstacle_cost[obs_lethal] = 100
+    obstacle_cost[~known] = -1
+
+    # Continuous non-lethal terrain cost (slope + roughness, capped at 90) for global_costmap so
+    # Nav2's global planner strongly prefers low-slope flat trails without locking in lethal cells.
+    terr_danger = np.maximum(w.get('slope', 1.0) * s_n, w.get('roughness', 1.0) * r_n)
+    terrain_cost = np.round(90.0 * np.clip(terr_danger, 0, 1)).astype(np.int16)
+    terrain_cost[~known] = -1
+
     return {
         'slope_deg': slope, 'step': step, 'roughness': rough,
-        'cost': cost.astype(np.int8), 'plane_ok': ok,
+        'cost': cost.astype(np.int8), 'obstacle_cost': obstacle_cost.astype(np.int8),
+        'terrain_cost': terrain_cost.astype(np.int8), 'plane_ok': ok,
     }
+
+
+def clamp_footprint_cost(cost, X, Y, rx, ry, radius, max_cost=50):
+    """Clamp cells inside the robot's own footprint so they are never lethal.
+
+    ``compute_traversability`` evaluates a +/-0.15 m window around every cell,
+    so a bush or steep curb right next to the chassis can bleed lethal cost
+    (100) onto the robot's standing spot and deadlock Nav2 DWB / BackUp at t=0.
+    Clamping cells inside ``radius`` to at most ``max_cost`` preserves real
+    obstacles outside the footprint (and preserves slope cost up to max_cost
+    inside it) while keeping the robot's own pose legally escapable.
+    """
+    if radius <= 0.0:
+        return cost
+    out = cost.copy()
+    cap = int(np.clip(max_cost, 0, 99))
+    inside = ((X - float(rx)) ** 2 + (Y - float(ry)) ** 2) <= float(radius) ** 2
+    out[inside & (out > cap)] = cap
+    return out

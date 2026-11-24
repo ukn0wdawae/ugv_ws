@@ -122,8 +122,9 @@
         </imu>
         <plugin filename='libgazebo_ros_imu_sensor.so' name='imu_plugin'>
           <ros>
-            <remapping>~/out:=imu</remapping>
+            <remapping>~/out:=imu/raw</remapping>
           </ros>
+          <initial_orientation_as_reference>false</initial_orientation_as_reference>
         </plugin>
       </sensor>
     </link>
@@ -563,17 +564,17 @@
         <pose>0 0 0 0 0 0</pose>
         <always_on>true</always_on>
         <visualize>false</visualize>
-        <update_rate>15</update_rate>
+        <update_rate>6</update_rate>
         <camera name="intel_realsense_r200">
           <horizontal_fov>1.02974</horizontal_fov>
           <image>
-            <width>640</width>
-            <height>480</height>
+            <width>320</width>
+            <height>240</height>
             <format>R8G8B8</format>
           </image>
           <clip>
             <near>0.05</near>
-            <far>10.0</far>
+            <far>5.0</far>
           </clip>
           <noise>
             <type>gaussian</type>
@@ -634,7 +635,7 @@
         </material>
       </visual>
 
-      <sensor name='lidar_3d' type='ray'>
+      <sensor name='lidar_3d' type='gpu_ray'>
         <always_on>true</always_on>
         <visualize>false</visualize>
         <pose>0 0 0.01 0 0 0</pose>
@@ -650,8 +651,8 @@
             <vertical>
               <samples>16</samples>
               <resolution>1.0</resolution>
-              <min_angle>-0.174533</min_angle>
-              <max_angle>0.523599</max_angle>
+              <min_angle>-0.279253</min_angle>
+              <max_angle>0.279253</max_angle>
             </vertical>
           </scan>
           <range>
@@ -991,7 +992,7 @@
         <pose>0 0 0 0 0 0</pose>
         <always_on>true</always_on>
         <visualize>false</visualize>
-        <update_rate>15</update_rate>
+        <update_rate>6</update_rate>
         <camera name="pt_camera">
           <horizontal_fov>1.08</horizontal_fov>
           <image>
@@ -1001,7 +1002,7 @@
           </image>
           <clip>
             <near>0.02</near>
-            <far>100</far>
+            <far>30</far>
           </clip>
           <noise>
             <type>gaussian</type>
@@ -1230,16 +1231,19 @@
       <wheel_diameter>0.08</wheel_diameter>
       <wheel_diameter>0.08</wheel_diameter>
 
-      <!-- Torque & acceleration limits -->
-      <max_wheel_torque>25</max_wheel_torque>
-      <max_wheel_acceleration>5.0</max_wheel_acceleration>
+      <!-- Realistic torque & acceleration limits (~1.2 N·m/wheel for 4 kg 6-wheel UGV Rover,
+           ~9.5x the 0.126 N·m/wheel gravity load on a 30 deg climb; avoids 190x wheelies/flips) -->
+      <max_wheel_torque>1.2</max_wheel_torque>
+      <max_wheel_acceleration>3.5</max_wheel_acceleration>
 
-      <!-- Odometry output -->
+      <!-- Realistic wheel-encoder odometry (0=ENCODER, NOT 1=WORLD ground truth);
+           robot_localization EKF fuses /wheel/odom + Madgwick /imu -> /odom & odom->base_footprint -->
+      <odometry_source>0</odometry_source>
       <publish_odom>true</publish_odom>
-      <publish_odom_tf>true</publish_odom_tf>
+      <publish_odom_tf>false</publish_odom_tf>
       <publish_wheel_tf>false</publish_wheel_tf>
       <command_topic>cmd_vel</command_topic>
-      <odometry_topic>odom</odometry_topic>
+      <odometry_topic>wheel/odom</odometry_topic>
       <odometry_frame>odom</odometry_frame>
       <robot_base_frame>base_footprint</robot_base_frame>
     </plugin>
