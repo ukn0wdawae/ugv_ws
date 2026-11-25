@@ -15,8 +15,7 @@
     HOME         when the area is covered or time is up
 
 Design rules
-  * Nav2 is the only thing that moves the wheels. Every goal is first checked with ComputePathToPose;
-    when Nav2 fails the node picks a different goal, it never steers by itself.
+  * Goals are checked with ComputePathToPose first; when Nav2 fails the node picks a different goal.
   * Only robot-side information is used: the costmap, the robot's own pose, the acoustic bearings /
     bearings from mic_array_localizer and the cameras. No GPS (the forest is GPS-denied), no simulation truth.
   * Everything runs on ROS time (sim time in Gazebo).

@@ -136,7 +136,7 @@ def test_frog_model_has_no_invisible_collision_pillar_and_hill_grass_matches_for
         r = float(cyl.find('radius').text)
         length = float(cyl.find('length').text)
         assert r <= 0.10 and length <= 0.06, f'oversized invisible frog collision cylinder r={r}, L={length}'
-    for wname in ('hill.world', 'hill_coqui_survey.world'):
+    for wname in (os.path.join('legacy_code', 'hill.world'), 'hill_coqui_survey.world'):
         wpath = os.path.join(ws_root, 'src', 'ugv_main', 'ugv_gazebo', 'worlds', wname)
         txt = open(wpath, encoding='utf-8').read()
         grass_blocks = re.findall(r'<model name=["\']altaniv[^"\']*["\']>.*?</model>', txt, flags=re.S)

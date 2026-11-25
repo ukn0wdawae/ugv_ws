@@ -1,5 +1,4 @@
-# Nav2 for the Coqui survey WITHOUT SLAM (map->odom is a static identity transform in simulation,
-# because Gazebo's /odom is ground truth). Derived from ugv_gazebo/param/slam_nav_traversability.yaml:
+# Nav2 for the Coqui survey. Derived from ugv_gazebo/param/legacy_code/slam_nav_traversability.yaml:
 #  - global costmap: no static map; 50 m rolling window at 10 cm built live from the traversability
 #    node (lethal steps/slopes/vegetation marked, traversable ground cleared)
 #  - goal yaw tolerance 2*pi: goals are positions; the pan-tilt camera does the aiming, so the robot

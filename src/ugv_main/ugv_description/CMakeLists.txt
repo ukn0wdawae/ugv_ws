@@ -6,7 +6,8 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
-install(DIRECTORY launch meshes urdf rviz
+# legacy_code/ only sorts the source tree: its folders are installed where they always were
+install(DIRECTORY meshes legacy_code/launch legacy_code/urdf legacy_code/rviz
     DESTINATION share/${PROJECT_NAME}
 )
 

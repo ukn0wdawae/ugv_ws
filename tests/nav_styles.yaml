@@ -13,8 +13,8 @@ styles:
     require_collision_monitor: true
 
   slam_nav_traversability:
-    description: "Standalone SLAM + Nav2 traversability config (ugv_gazebo/param/slam_nav_traversability.yaml)"
-    nav2_params: src/ugv_main/ugv_gazebo/param/slam_nav_traversability.yaml
+    description: "Standalone SLAM + Nav2 traversability config (ugv_gazebo/param/legacy_code/slam_nav_traversability.yaml)"
+    nav2_params: src/ugv_main/ugv_gazebo/param/legacy_code/slam_nav_traversability.yaml
     bt_xml: src/ugv_main/ugv_coqui_behavior/config/bt_commit_to_path.xml
     traversability_params: src/ugv_main/ugv_traversability/config/traversability.yaml
     survey_params: src/ugv_main/ugv_coqui_behavior/config/survey_base.yaml

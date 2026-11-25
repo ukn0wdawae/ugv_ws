@@ -44,7 +44,7 @@ The 10 s status line reports clouds processed **per sensor frame**, so a silent 
 `clouds 250 (...), maps 50 (62 ms), known 61 %, ... per frame {'lidar_3d_link': 100, '3d_camera_link': 150}`.
 
 ### Nav2
-`ugv_gazebo/param/slam_nav_traversability.yaml` is `slam_nav_terrain.yaml` with the obstacle-layer
+`ugv_gazebo/param/legacy_code/slam_nav_traversability.yaml` is `slam_nav_terrain.yaml` with the obstacle-layer
 sources switched to the two clouds above, plus a graded `traversability_layer` (StaticLayer on the grid)
 in the local costmap:
 

@@ -56,7 +56,7 @@ def test_docker_latest_scripts_paths_and_safety_checks(ws_root):
 def test_docker_cleanup_and_shm_isolation(ws_root):
     """Regression: latest-scripts and trial runner must use _cleanup_lib.sh tag reaping so closing
     a terminal (SIGHUP) or double Ctrl+C never strands gzserver/rviz2/rtabmap/ros2-daemon, and
-    docker/shell.sh + launch_docker_sim.sh must use --init and --shm-size instead of --ipc host."""
+    docker/shell.sh + legacy_code/launch_docker_sim.sh must use --init and --shm-size instead of --ipc host."""
     cleanup_lib = os.path.join(ws_root, 'docker', 'latest-scripts', '_cleanup_lib.sh')
     assert os.path.isfile(cleanup_lib), '_cleanup_lib.sh helper must exist'
     lib_txt = open(cleanup_lib, encoding='utf-8').read()
@@ -70,7 +70,7 @@ def test_docker_cleanup_and_shm_isolation(ws_root):
         txt = open(os.path.join(ws_root, *rel), encoding='utf-8').read()
         assert '_cleanup_lib.sh' in txt and 'ugv_init_launch_cleanup' in txt, f'{rel} missing cleanup trap'
 
-    for rel in (('docker', 'shell.sh'), ('launch_docker_sim.sh',)):
+    for rel in (('docker', 'shell.sh'), ('legacy_code', 'launch_docker_sim.sh')):
         txt = open(os.path.join(ws_root, *rel), encoding='utf-8').read()
         assert '--init' in txt, f'{rel} must pass --init to reap zombies and handle SIGTERM'
         assert '--shm-size=' in txt, f'{rel} must allocate private container /dev/shm'
@@ -97,7 +97,7 @@ def test_gazebo_profile_arg_isolation_and_clean_python_shutdown(ws_root):
         ('src', 'ugv_main', 'ugv_audio', 'ugv_audio', 'coqui_sound_emitter.py'),
         ('src', 'ugv_main', 'ugv_audio', 'ugv_audio', 'mic_array_localizer.py'),
         ('src', 'ugv_main', 'ugv_coqui_behavior', 'ugv_coqui_behavior', 'pt_camera_controller.py'),
-        ('src', 'ugv_main', 'ugv_coqui_behavior', 'ugv_coqui_behavior', 'coqui_hunter_node.py'),
+        ('src', 'ugv_main', 'ugv_coqui_behavior', 'ugv_coqui_behavior', 'legacy_code', 'coqui_hunter_node.py'),
     ):
         py_txt = open(os.path.join(ws_root, *rel), encoding='utf-8').read()
         ast.parse(py_txt)
@@ -182,8 +182,9 @@ def test_gazebo_model_meshes_and_base_link_chassis_resolution(ws_root, tmp_path)
         zip_names = set(zf.namelist())
     assert 'ugv_description/meshes/ugv_rover/base_link_chassis.stl' in zip_names
 
-    models_dir = os.path.join(ws_root, 'src', 'ugv_main', 'ugv_gazebo', 'models')
-    for sdf_path in sorted(glob.glob(os.path.join(models_dir, '*', 'model.sdf'))):
+    pkg_gz = os.path.join(ws_root, 'src', 'ugv_main', 'ugv_gazebo')
+    for sdf_path in sorted(glob.glob(os.path.join(pkg_gz, 'models', '*', 'model.sdf'))
+                           + glob.glob(os.path.join(pkg_gz, 'legacy_code', 'models', '*', 'model.sdf'))):
         root = ET.parse(sdf_path).getroot()
         for uri_el in root.iter('uri'):
             uri = (uri_el.text or '').strip()

@@ -129,10 +129,10 @@ nav_goal_tests:
 physics_tests:
   - id: cross_slope_slip_6deg
     script: tests/sim/run_slope_physics_test.sh
-    origin: "docker/.slopetest.sh (6 deg cross-slope slip check)"
+    origin: "docker/legacy_code/.slopetest.sh (6 deg cross-slope slip check)"
   - id: hill_cracks_wall_uphill
     script: tests/sim/run_hill_terrain_test.sh
-    origin: "docker/.hilltest.sh (idle spawn, north/south cracks, boundary wall, uphill climb)"
+    origin: "docker/legacy_code/.hilltest.sh (idle spawn, north/south cracks, boundary wall, uphill climb)"
   - id: forest_24_drive_trials
     script: tests/sim/run_drive_trials.sh
     trials_file: tests/cases/forest_drive_trials.json

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pooled from docker/.hilltest.sh: isolated headless hill terrain contact test
+# Pooled from docker/legacy_code/.hilltest.sh: isolated headless hill terrain contact test
 # (idle at spawn, north/south cracks, boundary wall, uphill climb along switchback path).
 # Run inside Docker container from ugv_ws root.
 set -eo pipefail

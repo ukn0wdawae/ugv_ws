@@ -56,7 +56,7 @@ MODEL_NAME = 'forest_terrain_traversable'
 MESH_NAME = 'terreno_traversable.dae'
 NEW_URI = f'model://{MODEL_NAME}/meshes/{MESH_NAME}'
 OLD_URI = 'model://terrain/terreno_dataset.dae'
-DEFAULT_WORLDS = ['forest.world', 'forest_tagged.world', 'forest_coqui.world']
+DEFAULT_WORLDS = ['forest.world', 'legacy_code/forest_tagged.world', 'legacy_code/forest_coqui.world']
 
 # Geometry of the meshes as instantiated by the forest worlds (state block):
 #   terrain link pose z = 3.0,  mesh scale 50 25 3

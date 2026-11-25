@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pooled from docker/.slopetest.sh: isolated headless slope physics stability test (6, 15, and 25 deg).
+# Pooled from docker/legacy_code/.slopetest.sh: isolated headless slope physics stability test (6, 15, and 25 deg).
 # Checks that ugv_pro_audio holds a cross-slope without excessive slip and does not flip.
 # Run inside Docker container from ugv_ws root.
 set -eo pipefail

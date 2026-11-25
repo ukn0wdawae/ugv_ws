@@ -93,7 +93,7 @@ ros2 run ugv_coqui_behavior eval_survey /root/ugv_ws/coqui_surveys/<run_id>/surv
 
 ## 3. New Robot Model: `ugv_pro_audio` & Physics Realism
 
-Defined in `src/ugv_main/ugv_gazebo/models/ugv_pro_audio/model.sdf` and `src/ugv_main/ugv_description/urdf/ugv_pro_audio.urdf` (alongside `ugv_beast_pro`), `ugv_pro_audio` upgrades the base Waveshare 6-wheel rover into a physically faithful off-road acoustic/visual survey platform:
+Defined in `src/ugv_main/ugv_gazebo/models/ugv_pro_audio/model.sdf` and `src/ugv_main/ugv_gazebo/urdf/ugv_pro_audio.urdf` (alongside `ugv_beast_pro`, now in `legacy_code/`), `ugv_pro_audio` upgrades the base Waveshare 6-wheel rover into a physically faithful off-road acoustic/visual survey platform:
 
 | Subsystem | Implementation Details |
 |---|---|
@@ -111,6 +111,8 @@ Defined in `src/ugv_main/ugv_gazebo/models/ugv_pro_audio/model.sdf` and `src/ugv
 ## 4. Outdoor Simulation Worlds & 3D Habitat Frog Randomization
 
 ### Custom Worlds (`src/ugv_main/ugv_gazebo/worlds/`)
+
+The survey loads only the two `*_coqui_survey.world` files; every world except those and their base `forest.world` is in `worlds/legacy_code/`.
 
 - **`forest.world` / `forest_coqui_survey.world`**: Dense forest (`100 m × 50 m`, El Yunque GPS reference, `32 m × 30 m` primary survey box) with rolling dirt terrain, winding trails, 100+ pine trees (`pine_1..5`), dense pine bushes (`bush_pine*`), fallen logs, and 260+ tall-grass tufts (`altaniv*`).
   - **Simulator Physics Repairs**: Original forest trail meshes had `4–9 cm` sharp step lips (lethal cliffs for `8 cm` wheels) and rock-solid collision meshes on grass tufts that capsized the rover. We built `forest_terrain_traversable`, stripped non-physical grass collisions across worlds, removed invisible collision pillars on `coqui_frog/model.sdf`, and tuned physics to `500 Hz` (`max_step_size = 0.002 s`) — taking closed-loop forest drive trials from **8/24 → 24/24**.
@@ -193,7 +195,7 @@ In `forest_coqui_survey.world`, the pine and bush `.obj` assets (`pine_1..6`) ca
 
 Located in `docker/` (`Dockerfile`, `shell.sh`, `entrypoint.sh`, `latest-scripts/`):
 
-- **Ubuntu 22.04 + ROS 2 Humble + Gazebo Classic 11 Image**: Pre-installs Nav2, `robot_localization`, Madgwick IMU filter, RTAB-Map, OpenCV, and NVIDIA/Mesa GLX X11 support (`launch_docker_sim.sh` and `docker/shell.sh`).
+- **Ubuntu 22.04 + ROS 2 Humble + Gazebo Classic 11 Image**: Pre-installs Nav2, `robot_localization`, Madgwick IMU filter, RTAB-Map, OpenCV, and NVIDIA/Mesa GLX X11 support (`docker/shell.sh`; older one-shot: `legacy_code/launch_docker_sim.sh`).
 - **Shared-Memory & Zombie Isolation**: Containers run with `--init` (`docker-init` PID 1 zombie reaping), private `--shm-size=2g` (preventing FastDDS `fastrtps_*` shared-memory segment leaks onto the host), and `ALSOFT_DRIVERS=null`.
 - **Zero-Orphan Teardown (`docker/latest-scripts/_cleanup_lib.sh`)**: Stamps every launch process tree with a unique `UGV_LAUNCH_TAG` in `/proc/<pid>/environ` and pairs it with a detached session watchdog (`SESSION_FILE` peer-monitoring). Pressing `Ctrl+C`, double-`Ctrl+C`, or closing a terminal tab cleanly terminates `gzserver`, `gzclient`, `rviz2` (`1 s` `sigterm_timeout`), `rtabmap`, Nav2 lifecycle servers, and idle `ros2-daemon` processes within ~1–2 seconds with zero leftover CPU/VRAM load.
 
@@ -235,12 +237,13 @@ All historical bug fixes, physics edge cases, chorus phantom scenarios, and navi
 | `src/ugv_main/ugv_description` | **Extended**: `ugv_pro_audio.urdf` and `ugv_beast_pro.urdf` robot descriptions. |
 | `docker/` & `docker/latest-scripts/` | **New**: ROS 2 Humble + Gazebo Classic 11 container build, isolated shell launcher, process-reaping `_cleanup_lib.sh`, 2-terminal survey scripts, and headless trial runner. |
 | `tests/` | **New**: Offline, ROS 2, and Gazebo regression & navigation style benchmark framework (`230` automated unit/offline tests + recorded field/sim scenarios). |
+| `legacy_code/` folders | Everything `docker/latest-scripts/` does not use, kept inside the folder it came from. ROS packages and launch files in there still build and run by name. |
 | `poster/` | **New**: Research poster (`main.tex`), mission trajectory & localization drift datasets (`poster/data/`), and figure generators (`poster/scripts/`). |
 
 ### Stock Upstream Waveshare Packages
 
 Inherited from [**waveshareteam/ugv_ws**](https://github.com/waveshareteam/ugv_ws) for physical Waveshare UGV Rover / UGV Beast / RaspRover hardware bringup and 2D indoor demos:
-- **Hardware & Teleop**: `ugv_base_node`, `ugv_bringup`, `ugv_interface`, `ugv_tools`
-- **Stock 2D SLAM / Nav / Vision / Web**: `ugv_nav`, `ugv_slam`, `ugv_vision`, `ugv_web_app`, `ugv_chat_ai`, and third-party dependencies under `src/ugv_else/` (`apriltag_ros`, `cartographer`, `costmap_converter`, `emcl2_ros2`, `explore_lite`, `gmapping`, `ldlidar`, `rf2o_laser_odometry`, `robot_pose_publisher`, `teb_local_planner`, `vizanti`).
+- **Hardware & Teleop** (in `src/ugv_main/legacy_code/`): `ugv_base_node`, `ugv_bringup`, `ugv_interface`, `ugv_tools`
+- **Stock 2D SLAM / Nav / Vision / Web** (in `src/ugv_main/legacy_code/`): `ugv_nav`, `ugv_slam`, `ugv_vision`, `ugv_web_app`, `ugv_chat_ai`, and third-party dependencies under `src/ugv_else/legacy_code/` (`robot_pose_publisher` stays in `src/ugv_else/`; `apriltag_ros`, `cartographer`, `costmap_converter`, `emcl2_ros2`, `explore_lite`, `gmapping`, `ldlidar`, `rf2o_laser_odometry`, `teb_local_planner`, `vizanti`).
 
 For physical car wiring, ESP32 UART JSON protocol, and stock 2D indoor Gmapping/Cartographer/AprilTag tutorials, refer directly to [**https://github.com/waveshareteam/ugv_ws**](https://github.com/waveshareteam/ugv_ws).

@@ -34,8 +34,8 @@ export UGV_MODEL=ugv_rover   # or ugv_beast / rasp_rover
 
 ```bash
 # first time only
-chmod +x docker/run_grass_sim.sh
-./docker/run_grass_sim.sh
+chmod +x docker/legacy_code/run_grass_sim.sh
+./docker/legacy_code/run_grass_sim.sh
 ```
 
 Or do the steps manually:
@@ -45,7 +45,7 @@ cd /root/ugv_ws
 source /opt/ros/humble/setup.bash
 export UGV_MODEL=ugv_rover
 export GAZEBO_MODEL_DATABASE_URI=""
-export GAZEBO_MODEL_PATH=/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:$GAZEBO_MODEL_PATH:/usr/share/gazebo-11/models
+export GAZEBO_MODEL_PATH=/root/.gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/models:/root/ugv_ws/src/ugv_main/ugv_gazebo/legacy_code/models:$GAZEBO_MODEL_PATH:/usr/share/gazebo-11/models
 
 mkdir -p /root/.gazebo/models
 unzip -qo ugv_description.zip -d /root/.gazebo/models
@@ -84,7 +84,7 @@ With gzserver already running from the launch file, you usually do **not** need 
 gz model -m
 
 # Spawn robot manually (if launch spawn failed)
-gz model --spawn-file=/root/ugv_ws/src/ugv_main/ugv_gazebo/models/ugv_rover/model.sdf \
+gz model --spawn-file=/root/ugv_ws/src/ugv_main/ugv_gazebo/legacy_code/models/ugv_rover/model.sdf \
   --model-name=ugv_rover -x 0 -y 0 -z 0.15
 
 # Delete / respawn
@@ -98,10 +98,10 @@ gz world -w
 Pure Gazebo Classic (no ROS) smoke test:
 
 ```bash
-gazebo --verbose /root/ugv_ws/src/ugv_main/ugv_gazebo/worlds/grass.world
+gazebo --verbose /root/ugv_ws/src/ugv_main/ugv_gazebo/worlds/legacy_code/grass.world
 ```
 
-Then insert the model from the GUI: **Insert** → navigate to `/root/ugv_ws/src/ugv_main/ugv_gazebo/models/ugv_rover`.
+Then insert the model from the GUI: **Insert** → navigate to `/root/ugv_ws/src/ugv_main/ugv_gazebo/legacy_code/models/ugv_rover`.
 
 ## Model options
 
