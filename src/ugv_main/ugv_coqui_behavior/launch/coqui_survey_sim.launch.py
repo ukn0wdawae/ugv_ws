@@ -16,6 +16,7 @@ import math
 import os
 import re
 import secrets
+import shutil
 import tempfile
 
 import yaml
@@ -76,21 +77,49 @@ def _rewrite_world_frogs(world_path, truth_doc):
     return out_world
 
 
+def _sync_ugv_description_meshes(pkg_desc: str, gz_models_home: str) -> bool:
+    src_meshes = os.path.join(pkg_desc, 'meshes')
+    dst_root = os.path.join(gz_models_home, 'ugv_description')
+    if not os.path.isdir(src_meshes):
+        return os.path.isdir(dst_root)
+    try:
+        os.makedirs(dst_root, exist_ok=True)
+        dst_cfg = os.path.join(dst_root, 'model.config')
+        src_cfg = os.path.join(pkg_desc, 'model.config')
+        if not os.path.isfile(dst_cfg) and os.path.isfile(src_cfg):
+            shutil.copy2(src_cfg, dst_cfg)
+        for root, _, files in os.walk(src_meshes):
+            rel = os.path.relpath(root, src_meshes)
+            target_dir = os.path.join(dst_root, 'meshes') if rel == '.' else os.path.join(dst_root, 'meshes', rel)
+            os.makedirs(target_dir, exist_ok=True)
+            for fn in files:
+                s_file = os.path.join(root, fn)
+                d_file = os.path.join(target_dir, fn)
+                if not os.path.isfile(d_file) or os.path.getsize(s_file) != os.path.getsize(d_file):
+                    shutil.copy2(s_file, d_file)
+        return True
+    except OSError:
+        return False
+
+
 def setup(context):
     lc = lambda n: LaunchConfiguration(n).perform(context)  # noqa: E731
     ugv = get_package_share_directory('ugv_gazebo')
+    pkg_desc = get_package_share_directory('ugv_description')
     gz = get_package_share_directory('gazebo_ros')
     beh = get_package_share_directory('ugv_coqui_behavior')
     bring = os.path.join(ugv, 'launch', 'bringup')
 
-    # model paths (same as bringup_forest.launch.py; avoid adding install/ugv_description/share
-    # when ~/.gazebo/models/ugv_description exists so gzclient does not warn on ament_index/colcon-core)
+    # Sync any new/updated STL meshes (e.g. base_link_chassis.stl) into ~/.gazebo/models/ugv_description
+    # so model://ugv_description/meshes/... always resolves cleanly without adding install/ugv_description/share
+    # (which would make gzclient warn on sibling ament_index/colcon-core folders).
     ws_root = os.path.abspath(os.path.join(ugv, '..', '..', '..', '..'))
     gz_models_home = os.path.expanduser('~/.gazebo/models')
+    synced = _sync_ugv_description_meshes(pkg_desc, gz_models_home)
     extra = [os.path.join(ws_root, 'gazebo_models'), '/root/ugv_ws/gazebo_models',
              gz_models_home, os.path.join(ugv, 'models')]
-    if not os.path.isdir(os.path.join(gz_models_home, 'ugv_description')):
-        extra.insert(0, os.path.dirname(get_package_share_directory('ugv_description')))
+    if not synced:
+        extra.insert(0, os.path.dirname(pkg_desc))
     parts = [p for p in os.environ.get('GAZEBO_MODEL_PATH', '').split(':') if p]
     for p in reversed(extra):
         if os.path.isdir(p) and p not in parts:

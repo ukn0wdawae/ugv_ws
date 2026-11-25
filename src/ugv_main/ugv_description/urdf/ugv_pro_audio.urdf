@@ -29,7 +29,7 @@
       <material
         name="chassis_mat">
         <color
-          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+          rgba="0.85 0.14 0.12 1" />
       </material>
     </visual>
     <collision>
@@ -86,7 +86,7 @@
       <material
         name="wheel_mat">
         <color
-          rgba="0.25 0.25 0.28 1" />
+          rgba="0.18 0.18 0.20 1" />
       </material>
     </visual>
     <collision>
@@ -139,7 +139,7 @@
       <material
         name="wheel_mat">
         <color
-          rgba="0.25 0.25 0.28 1" />
+          rgba="0.18 0.18 0.20 1" />
       </material>
     </visual>
     <collision>
@@ -192,7 +192,7 @@
       <material
         name="wheel_mat">
         <color
-          rgba="0.25 0.25 0.28 1" />
+          rgba="0.18 0.18 0.20 1" />
       </material>
     </visual>
     <collision>
@@ -245,7 +245,7 @@
       <material
         name="wheel_mat">
         <color
-          rgba="0.25 0.25 0.28 1" />
+          rgba="0.18 0.18 0.20 1" />
       </material>
     </visual>
     <collision>
@@ -298,7 +298,7 @@
       <material
         name="wheel_mat">
         <color
-          rgba="0.25 0.25 0.28 1" />
+          rgba="0.18 0.18 0.20 1" />
       </material>
     </visual>
     <collision>
@@ -351,7 +351,7 @@
       <material
         name="wheel_mat">
         <color
-          rgba="0.25 0.25 0.28 1" />
+          rgba="0.18 0.18 0.20 1" />
       </material>
     </visual>
     <collision>
@@ -405,7 +405,7 @@
       <material
         name="sensor_mat">
         <color
-          rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+          rgba="0.30 0.33 0.38 1" />
       </material>
     </visual>
     <collision>
@@ -608,7 +608,7 @@
       <material
         name="sensor_mat">
         <color
-          rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+          rgba="0.30 0.33 0.38 1" />
       </material>
     </visual>
     <collision>
@@ -661,7 +661,7 @@
       <material
         name="sensor_mat">
         <color
-          rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+          rgba="0.30 0.33 0.38 1" />
       </material>
     </visual>
     <collision>
@@ -719,7 +719,7 @@
       <material
         name="sensor_mat">
         <color
-          rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+          rgba="0.30 0.33 0.38 1" />
       </material>
     </visual>
     <collision>
@@ -777,7 +777,7 @@
       <material
         name="sensor_mat">
         <color
-          rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+          rgba="0.30 0.33 0.38 1" />
       </material>
     </visual>
     <collision>

@@ -166,3 +166,58 @@ def test_per_run_frog_randomization_enabled_by_default(ws_root):
     finally:
         if os.path.exists(out_world):
             os.remove(out_world)
+
+
+def test_gazebo_model_meshes_and_base_link_chassis_resolution(ws_root, tmp_path):
+    """Regression: every model://ugv_description/meshes/... URI in Gazebo SDFs must exist in both
+    src/ugv_main/ugv_description/meshes/ AND ugv_description.zip (specifically base_link_chassis.stl
+    for ugv_pro_audio), launch files must auto-sync missing meshes into ~/.gazebo/models/ugv_description,
+    and Docker scripts must not skip re-extracting when ~/.gazebo/models/ugv_description is stale."""
+    import glob
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    zip_path = os.path.join(ws_root, 'ugv_description.zip')
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        zip_names = set(zf.namelist())
+    assert 'ugv_description/meshes/ugv_rover/base_link_chassis.stl' in zip_names
+
+    models_dir = os.path.join(ws_root, 'src', 'ugv_main', 'ugv_gazebo', 'models')
+    for sdf_path in sorted(glob.glob(os.path.join(models_dir, '*', 'model.sdf'))):
+        root = ET.parse(sdf_path).getroot()
+        for uri_el in root.iter('uri'):
+            uri = (uri_el.text or '').strip()
+            if uri.startswith('model://ugv_description/'):
+                rel = uri[len('model://ugv_description/'):]
+                src_mesh = os.path.join(ws_root, 'src', 'ugv_main', 'ugv_description', rel)
+                assert os.path.isfile(src_mesh), f'{sdf_path}: missing source mesh {src_mesh}'
+                assert f'ugv_description/{rel}' in zip_names, f'{sdf_path}: {rel} missing from ugv_description.zip'
+
+    # Verify _sync_ugv_description_meshes repairs an incomplete ~/.gazebo/models/ugv_description
+    sim_launch_path = os.path.join(
+        ws_root, 'src', 'ugv_main', 'ugv_coqui_behavior', 'launch', 'coqui_survey_sim.launch.py')
+    tree = ast.parse(open(sim_launch_path, encoding='utf-8').read())
+    ns = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == '_sync_ugv_description_meshes':
+            mod_ast = ast.fix_missing_locations(ast.Module(body=[
+                ast.Import(names=[ast.alias(name='os'), ast.alias(name='shutil')]),
+                node,
+            ], type_ignores=[]))
+            exec(compile(mod_ast, sim_launch_path, 'exec'), ns)
+
+    fake_gz_home = tmp_path / 'gazebo_models'
+    stale_rover = fake_gz_home / 'ugv_description' / 'meshes' / 'ugv_rover'
+    stale_rover.mkdir(parents=True)
+    assert not (stale_rover / 'base_link_chassis.stl').exists()
+
+    pkg_desc_src = os.path.join(ws_root, 'src', 'ugv_main', 'ugv_description')
+    assert ns['_sync_ugv_description_meshes'](pkg_desc_src, str(fake_gz_home)) is True
+    assert (stale_rover / 'base_link_chassis.stl').is_file()
+    assert (fake_gz_home / 'ugv_description' / 'model.config').is_file()
+
+    # Docker scripts must check for base_link_chassis.stl rather than only [ ! -d .../ugv_description ]
+    for sh_path in sorted(glob.glob(os.path.join(ws_root, 'docker', '**', '*.sh'), recursive=True)):
+        sh_txt = open(sh_path, encoding='utf-8').read()
+        assert '[ ! -d /root/.gazebo/models/ugv_description ]' not in sh_txt, (
+            f'{sh_path} still skips mesh update when stale /root/.gazebo/models/ugv_description exists')

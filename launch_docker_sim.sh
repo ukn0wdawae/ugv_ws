@@ -62,6 +62,8 @@ docker exec "$NAME" bash -lc '
   source /opt/ros/humble/setup.bash
   mkdir -p /root/.gazebo/models
   unzip -qo /root/ugv_ws/ugv_description.zip -d /root/.gazebo/models
+  cp -f /root/ugv_ws/src/ugv_main/ugv_description/meshes/ugv_rover/base_link_chassis.stl \
+    /root/.gazebo/models/ugv_description/meshes/ugv_rover/ 2>/dev/null || true
   cd /root/ugv_ws
   colcon build --packages-select ugv_gazebo --symlink-install
 '

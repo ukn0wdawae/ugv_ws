@@ -2,15 +2,66 @@
 """Launch Gazebo Classic with the grass sample world and spawn the Waveshare UGV."""
 
 import os
+import shutil
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
 
-def generate_launch_description():
+def _sync_ugv_description_meshes(pkg_desc: str, gz_models_home: str) -> bool:
+    src_meshes = os.path.join(pkg_desc, 'meshes')
+    dst_root = os.path.join(gz_models_home, 'ugv_description')
+    if not os.path.isdir(src_meshes):
+        return os.path.isdir(dst_root)
+    try:
+        os.makedirs(dst_root, exist_ok=True)
+        dst_cfg = os.path.join(dst_root, 'model.config')
+        src_cfg = os.path.join(pkg_desc, 'model.config')
+        if not os.path.isfile(dst_cfg) and os.path.isfile(src_cfg):
+            shutil.copy2(src_cfg, dst_cfg)
+        for root, _, files in os.walk(src_meshes):
+            rel = os.path.relpath(root, src_meshes)
+            target_dir = os.path.join(dst_root, 'meshes') if rel == '.' else os.path.join(dst_root, 'meshes', rel)
+            os.makedirs(target_dir, exist_ok=True)
+            for fn in files:
+                s_file = os.path.join(root, fn)
+                d_file = os.path.join(target_dir, fn)
+                if not os.path.isfile(d_file) or os.path.getsize(s_file) != os.path.getsize(d_file):
+                    shutil.copy2(s_file, d_file)
+        return True
+    except OSError:
+        return False
+
+
+def _ensure_gazebo_env():
+    pkg_share = get_package_share_directory('ugv_gazebo')
+    pkg_desc = get_package_share_directory('ugv_description')
+    ws_root = os.path.abspath(os.path.join(pkg_share, '..', '..', '..', '..'))
+    gz_models_home = os.path.expanduser('~/.gazebo/models')
+    synced = _sync_ugv_description_meshes(pkg_desc, gz_models_home)
+    extra_paths = [
+        gz_models_home,
+        os.path.join(ws_root, 'gazebo_models'),
+        '/root/ugv_ws/gazebo_models',
+        os.path.join(pkg_share, 'models'),
+    ]
+    if not synced:
+        extra_paths.insert(0, os.path.dirname(pkg_desc))
+    current = os.environ.get('GAZEBO_MODEL_PATH', '')
+    parts = [p for p in current.split(':') if p]
+    for p in reversed(extra_paths):
+        if os.path.isdir(p) and p not in parts:
+            parts.insert(0, p)
+    os.environ['GAZEBO_MODEL_PATH'] = ':'.join(parts)
+    os.environ['GAZEBO_MODEL_DATABASE_URI'] = ''
+
+
+def _launch_setup(context, *args, **kwargs):
+    _ensure_gazebo_env()
+
     launch_file_dir = os.path.join(
         get_package_share_directory('ugv_gazebo'), 'launch/bringup'
     )
@@ -23,49 +74,45 @@ def generate_launch_description():
         'grass.world',
     )
 
-    declare_use_sim_time = DeclareLaunchArgument(
-        'use_sim_time',
-        default_value='true',
-        description='Use Gazebo simulation clock',
-    )
-
-    gzserver_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')
+    return [
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')
+            ),
+            launch_arguments={
+                'world': world,
+                'verbose': 'true',
+            }.items(),
         ),
-        launch_arguments={
-            'world': world,
-            'verbose': 'true',
-        }.items(),
-    )
-
-    gzclient_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_gazebo_ros, 'launch', 'gzclient.launch.py')
-        )
-    )
-
-    robot_state_publisher_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(launch_file_dir, 'robot_state_publisher.launch.py')
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(pkg_gazebo_ros, 'launch', 'gzclient.launch.py')
+            )
         ),
-        launch_arguments={'use_sim_time': use_sim_time}.items(),
-    )
-
-    spawn_ugv_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(launch_file_dir, 'spawn_ugv.launch.py')
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(launch_file_dir, 'robot_state_publisher.launch.py')
+            ),
+            launch_arguments={'use_sim_time': use_sim_time}.items(),
         ),
-        launch_arguments={
-            'x_pose': '0.0',
-            'y_pose': '0.0',
-        }.items(),
-    )
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(launch_file_dir, 'spawn_ugv.launch.py')
+            ),
+            launch_arguments={
+                'x_pose': '0.0',
+                'y_pose': '0.0',
+            }.items(),
+        ),
+    ]
 
-    ld = LaunchDescription()
-    ld.add_action(declare_use_sim_time)
-    ld.add_action(gzserver_cmd)
-    ld.add_action(gzclient_cmd)
-    ld.add_action(robot_state_publisher_cmd)
-    ld.add_action(spawn_ugv_cmd)
-    return ld
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='true',
+            description='Use Gazebo simulation clock',
+        ),
+        OpaqueFunction(function=_launch_setup),
+    ])

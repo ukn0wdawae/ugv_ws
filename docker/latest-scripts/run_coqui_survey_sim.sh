@@ -75,10 +75,12 @@ if [ -n "$STALE_NODES" ]; then
   exit 1
 fi
 
-if [ ! -d /root/.gazebo/models/ugv_description ]; then
+if [ ! -f /root/.gazebo/models/ugv_description/meshes/ugv_rover/base_link_chassis.stl ]; then
   echo "Installing ugv_description meshes into ~/.gazebo/models ..."
   mkdir -p /root/.gazebo/models
   unzip -qo /root/ugv_ws/ugv_description.zip -d /root/.gazebo/models
+  cp -f /root/ugv_ws/src/ugv_main/ugv_description/meshes/ugv_rover/base_link_chassis.stl \
+    /root/.gazebo/models/ugv_description/meshes/ugv_rover/ 2>/dev/null || true
 fi
 
 PKGS=(ugv_description ugv_gazebo ugv_audio ugv_traversability ugv_coqui_behavior)

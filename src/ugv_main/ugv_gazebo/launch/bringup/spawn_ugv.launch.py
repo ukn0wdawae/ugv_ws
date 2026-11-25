@@ -1,4 +1,5 @@
 import os
+import shutil
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -7,7 +8,33 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
+def _sync_ugv_description_meshes():
+    pkg_desc = get_package_share_directory('ugv_description')
+    src_meshes = os.path.join(pkg_desc, 'meshes')
+    dst_root = os.path.join(os.path.expanduser('~/.gazebo/models'), 'ugv_description')
+    if not os.path.isdir(src_meshes):
+        return
+    try:
+        os.makedirs(dst_root, exist_ok=True)
+        dst_cfg = os.path.join(dst_root, 'model.config')
+        src_cfg = os.path.join(pkg_desc, 'model.config')
+        if not os.path.isfile(dst_cfg) and os.path.isfile(src_cfg):
+            shutil.copy2(src_cfg, dst_cfg)
+        for root, _, files in os.walk(src_meshes):
+            rel = os.path.relpath(root, src_meshes)
+            target_dir = os.path.join(dst_root, 'meshes') if rel == '.' else os.path.join(dst_root, 'meshes', rel)
+            os.makedirs(target_dir, exist_ok=True)
+            for fn in files:
+                s_file = os.path.join(root, fn)
+                d_file = os.path.join(target_dir, fn)
+                if not os.path.isfile(d_file) or os.path.getsize(s_file) != os.path.getsize(d_file):
+                    shutil.copy2(s_file, d_file)
+    except OSError:
+        pass
+
+
 def _setup(context):
+    _sync_ugv_description_meshes()
     UGV_MODEL = os.environ.get('UGV_MODEL', 'ugv_pro_audio')
     sdf_path = os.path.join(
         get_package_share_directory('ugv_gazebo'),
